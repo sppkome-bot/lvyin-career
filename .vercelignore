@@ -1,0 +1,16 @@
+# 只上传运行游戏所需的静态文件，避免把设计文档和源文件重复部署
+dist/
+tools/
+.screenshots/
+.trae/
+.trae-html-share-packages/
+.netlify/
+.edgeone/
+
+*.md
+*.txt
+
+绿茵生涯.html
+绿茵生涯_球员数据库.js
+绿茵生涯_单文件版.html
+main-ui*.png

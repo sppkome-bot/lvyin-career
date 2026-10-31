@@ -1,0 +1,25 @@
+# Local Netlify folder
+.netlify
+
+# Local tooling / artifacts
+.trae/
+.trae-html-share-packages/
+.screenshots/
+.edgeone/
+.netlify/
+
+# Tencent Cloud EdgeOne
+.env
+.edgeone/*
+.tef_dist/*
+
+# Vercel
+.vercel
+
+# Node
+node_modules/
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db

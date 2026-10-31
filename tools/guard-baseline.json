@@ -1,0 +1,7 @@
+{
+  "fanWrite": 16,
+  "coachWrite": 14,
+  "appliers": 5,
+  "fxDefs": 1,
+  "_note": "数字只能下调，不能上调。统计已剔除 //#FX-LEGACY-START/END 之间的旧实现；改造前约 95/85，当前活跃直写 16/14。"
+}
