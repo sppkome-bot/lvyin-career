@@ -2,7 +2,7 @@
 
 > 从青训到传奇的足球生涯模拟游戏，全部运行在浏览器里。
 
-[![在线试玩](https://img.shields.io/badge/%E5%9C%A8%E7%BA%BF%E8%AF%95%E7%8E%A9-lvyin--career.vercel.app-ff4d8d)](https://lvyin-career.vercel.app)
+[![在线试玩](https://img.shields.io/badge/%E5%9C%A8%E7%BA%BF%E8%AF%95%E7%8E%A9-www.talksport.online-ff4d8d)](https://www.talksport.online)
 [![License: MIT](https://img.shields.io/badge/License-MIT-22d3ee.svg)](LICENSE)
 [![PWA](https://img.shields.io/badge/PWA-ready-4ade80.svg)](manifest.webmanifest)
 
@@ -14,7 +14,8 @@
 
 ## 在线试玩
 
-- Vercel：<https://lvyin-career.vercel.app>
+- 主站：<https://www.talksport.online>
+- 备用域名：<https://talksport.online>（自动 308 跳转到 www）
 
 ## 玩法特色
 
