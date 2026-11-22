@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex,nofollow">
+<title>绿茵生涯 · 匿名战绩后台</title>
+<style>
+  :root{
+    --bg:#080820; --panel:#11102b; --panel2:#171536; --line:rgba(167,139,250,.22);
+    --text:#eef1ff; --muted:#a9b4d6; --pink:#ff4d8d; --cyan:#22d3ee; --gold:#ffd166;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:
+    radial-gradient(900px 520px at 8% -6%,rgba(255,77,141,.18),transparent 62%),
+    radial-gradient(820px 520px at 104% 4%,rgba(34,211,238,.16),transparent 62%),
+    var(--bg);
+    color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;min-height:100vh}
+  .wrap{max-width:1440px;margin:0 auto;padding:28px 20px 60px}
+  h1{font-size:24px;margin:0 0 6px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:22px}
+  .login{max-width:540px;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:22px}
+  .login p{color:var(--muted);font-size:13px;line-height:1.7;margin:0 0 14px}
+  input{width:100%;padding:12px 14px;border-radius:10px;border:1px solid #2a2550;background:#0b0a20;color:var(--text);font-size:14px;outline:none}
+  input:focus{border-color:var(--pink)}
+  button{margin-top:12px;padding:11px 18px;border:0;border-radius:10px;background:linear-gradient(90deg,#ff4d8d,#a855f7);color:#fff;font-size:14px;font-weight:700;cursor:pointer}
+  button:disabled{opacity:.6;cursor:default}
+  .err{color:#ff8fa8;font-size:13px;margin-top:10px;display:none}
+  .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}
+  .card .k{font-size:12px;color:var(--muted)}
+  .card .v{font-size:28px;font-weight:800;margin-top:4px}
+  .card .v.cyan{color:var(--cyan)} .card .v.gold{color:var(--gold)} .card .v.pink{color:var(--pink)}
+  .grid{display:grid;grid-template-columns:1.15fr .85fr;gap:16px;margin-bottom:18px}
+  .box{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px;min-height:120px}
+  .box h2{font-size:14px;margin:0 0 10px;color:var(--muted);font-weight:600}
+  .chips{display:flex;flex-wrap:wrap;gap:8px}
+  .chip{background:#0c0b22;border:1px solid #29224e;border-radius:999px;padding:6px 10px;font-size:12px;color:var(--text)}
+  .chip b{color:var(--gold);margin-left:6px}
+  .tablebox{background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  .toolbar{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:12px 14px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .toolbar .title{font-size:14px;font-weight:700}
+  .toolbar input{max-width:280px;padding:9px 12px}
+  .tablewrap{overflow:auto;max-height:62vh}
+  table{width:100%;border-collapse:collapse;font-size:12px;white-space:nowrap}
+  th,td{padding:10px 12px;text-align:left;border-bottom:1px solid #211c40}
+  th{position:sticky;top:0;background:#14122f;color:var(--muted);font-weight:600;z-index:1}
+  tr:hover td{background:#151332}
+  .club{color:var(--cyan);font-weight:700}
+  .pos{color:var(--gold)}
+  .muted{color:var(--muted)}
+  .honour{color:var(--pink)}
+  .empty{padding:28px;text-align:center;color:var(--muted);font-size:13px}
+  .foot{color:var(--muted);font-size:12px;margin-top:14px;line-height:1.7}
+  .hidden{display:none}
+  @media (max-width:900px){.cards{grid-template-columns:repeat(2,1fr)}.grid{grid-template-columns:1fr}.wrap{padding:18px 12px 40px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>⚽ 绿茵生涯 · 匿名战绩后台</h1>
+  <div class="sub">只记录匿名存档摘要：俱乐部、赛季/生涯数据、荣誉。不记录姓名，不记录账号。</div>
+
+  <div id="login" class="login">
+    <p>输入后台密码。密码保存在 Vercel 项目的 <code>ADMIN_TOKEN</code> 环境变量里。</p>
+    <input id="token" type="password" placeholder="后台密码" autocomplete="current-password">
+    <button id="enter">查看数据</button>
+    <div id="err" class="err"></div>
+  </div>
+
+  <div id="dash" class="hidden">
+    <div class="cards">
+      <div class="card"><div class="k">最近快照</div><div id="cSnap" class="v">0</div></div>
+      <div class="card"><div class="k">独立玩家</div><div id="cPlayers" class="v cyan">0</div></div>
+      <div class="card"><div class="k">覆盖俱乐部</div><div id="cClubs" class="v gold">0</div></div>
+      <div class="card"><div class="k">累计荣誉</div><div id="cHonours" class="v pink">0</div></div>
+    </div>
+
+    <div class="grid">
+      <div class="box"><h2>俱乐部分布</h2><div id="clubs" class="chips"></div></div>
+      <div class="box"><h2>联赛 / 位置</h2><div id="leagues" class="chips"></div><div id="positions" class="chips" style="margin-top:10px"></div></div>
+    </div>
+
+    <div class="tablebox">
+      <div class="toolbar">
+        <div class="title">玩家快照 <span id="shown" class="muted"></span></div>
+        <input id="filter" placeholder="搜俱乐部 / 联赛 / 位置">
+      </div>
+      <div class="tablewrap">
+        <table>
+          <thead><tr>
+            <th>时间</th><th>玩家</th><th>年龄</th><th>位置</th><th>俱乐部</th><th>联赛</th>
+            <th>综合</th><th>赛季 场/球/助</th><th>生涯 场/球/助</th><th>国家队</th><th>荣誉</th><th>最近荣誉</th>
+          </tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <div id="empty" class="empty hidden">还没有数据。等有人打开游戏并产生存档后，这里会出现。</div>
+    </div>
+    <div class="foot">
+      数据来自玩家浏览器的本地存档摘要，只包含俱乐部、联赛、位置、能力、赛季/生涯数据、国家队与荣誉，不包含姓名。
+      玩家可在网址后加 <code>?notelemetry=1</code> 关闭上报。
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  var tokenKey = 'lvyin_admin_token';
+  var token = sessionStorage.getItem(tokenKey) || '';
+  var data = null;
+
+  var $ = function(id){ return document.getElementById(id); };
+
+  function fmtTime(v){
+    if(!v) return '-';
+    var d = new Date(v);
+    if(isNaN(d.getTime())) return String(v);
+    var p = function(n){ return n<10?'0'+n:''+n; };
+    return (d.getMonth()+1)+'/'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes());
+  }
+
+  function chip(name, count){
+    var el = document.createElement('span');
+    el.className = 'chip';
+    el.textContent = name;
+    var b = document.createElement('b');
+    b.textContent = count;
+    el.appendChild(b);
+    return el;
+  }
+
+  function fillChips(id, list){
+    var box = $(id);
+    box.innerHTML = '';
+    if(!list || !list.length){ box.innerHTML = '<span class="muted">暂无</span>'; return; }
+    list.forEach(function(x){ box.appendChild(chip(x.name, x.count)); });
+  }
+
+  function render(){
+    if(!data) return;
+    $('login').classList.add('hidden');
+    $('dash').classList.remove('hidden');
+    $('cSnap').textContent = data.shown || 0;
+    $('cPlayers').textContent = data.uniquePlayers || 0;
+    $('cClubs').textContent = data.clubs ? data.clubs.length : 0;
+    $('cHonours').textContent = data.honourTotal || 0;
+    fillChips('clubs', data.clubs);
+    fillChips('leagues', data.leagues);
+    fillChips('positions', data.positions);
+    $('shown').textContent = '（共 ' + (data.totalSnapshots || 0) + ' 条，显示最近 ' + (data.rows ? data.rows.length : 0) + ' 条）';
+    renderRows(data.rows || []);
+  }
+
+  function renderRows(rows){
+    var filter = ($('filter').value || '').trim().toLowerCase();
+    var tbody = $('rows');
+    tbody.innerHTML = '';
+    var shown = 0;
+
+    rows.forEach(function(row){
+      var p = row.player || {};
+      var season = p.season || {};
+      var career = p.career || {};
+      var nat = p.national || {};
+      var h = p.honours || {};
+      var honourNames = (h.names || []).map(function(x){ return x.name + '×' + x.count; }).join('、');
+      var recent = (h.recent || []).slice(-1)[0];
+      var recentText = recent ? ((recent.year ? recent.year + ' ' : '') + (recent.name || '') + (recent.team ? ' · ' + recent.team : '')) : '';
+      var pos = (p.position || '') + (p.role ? ' · ' + p.role : '');
+      var hay = [p.club, p.league, pos, p.nation, honourNames].join(' ').toLowerCase();
+      if(filter && hay.indexOf(filter) < 0) return;
+      shown++;
+
+      var tr = document.createElement('tr');
+      var cells = [
+        fmtTime(row.receivedAt || row._uploadedAt),
+        '<span class="muted">' + (row.anon ? row.anon.slice(0,8) : '-') + '</span>',
+        (p.age || '-') + '岁',
+        '<span class="pos">' + (pos || '-') + '</span>',
+        '<span class="club">' + (p.club || '-') + '</span>',
+        p.league || '-',
+        '<b>' + (p.overall || 0) + '</b>',
+        (season.apps||0) + ' / ' + (season.goals||0) + ' / ' + (season.assists||0),
+        (career.apps||0) + ' / ' + (career.goals||0) + ' / ' + (career.assists||0),
+        (nat.caps||0) + '场 ' + (nat.goals||0) + '球',
+        '<span class="honour">' + (h.count||0) + '</span>',
+        recentText || '<span class="muted">-</span>'
+      ];
+      cells.forEach(function(html){
+        var td = document.createElement('td');
+        td.innerHTML = html;
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+
+    $('empty').classList.toggle('hidden', shown > 0);
+  }
+
+  async function load(){
+    var t = $('token').value.trim() || token;
+    if(!t){ $('err').style.display = 'block'; $('err').textContent = '请输入密码'; return; }
+    $('enter').disabled = true;
+    $('err').style.display = 'none';
+    try{
+      var r = await fetch('/api/admin?limit=200', { headers: { Authorization: 'Bearer ' + t }, cache: 'no-store' });
+      if(r.status === 401){ throw new Error('密码不对'); }
+      if(!r.ok){ throw new Error('读取失败（HTTP ' + r.status + '）'); }
+      data = await r.json();
+      token = t;
+      sessionStorage.setItem(tokenKey, t);
+      render();
+    }catch(e){
+      $('err').style.display = 'block';
+      $('err').textContent = e.message || '读取失败';
+    }finally{
+      $('enter').disabled = false;
+    }
+  }
+
+  $('enter').addEventListener('click', load);
+  $('token').addEventListener('keydown', function(e){ if(e.key === 'Enter') load(); });
+  $('filter').addEventListener('input', function(){ if(data) renderRows(data.rows || []); });
+  if(token){ $('token').value = token; load(); }
+})();
+</script>
+</body>
+</html>

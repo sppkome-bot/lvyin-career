@@ -58997,6 +58997,140 @@ updateSfxBtn();
   window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
 </script>
 <script defer src="/_vercel/insights/script.js"></script>
+<script>
+(function(){
+  try{
+    var q = new URLSearchParams(location.search);
+    if(q.has('notelemetry')) localStorage.setItem('lvyin_telemetry_optout','1');
+    if(localStorage.getItem('lvyin_telemetry_optout')==='1') return;
+
+    var id = localStorage.getItem('lvyin_telemetry_id');
+    if(!/^[a-f0-9]{16,40}$/.test(id||'')){
+      var bytes = new Uint8Array(12);
+      if(window.crypto && crypto.getRandomValues) crypto.getRandomValues(bytes);
+      else for(var i=0;i<bytes.length;i++) bytes[i] = Math.floor(Math.random()*256);
+      id = Array.prototype.map.call(bytes,function(b){ return ('0'+b.toString(16)).slice(-2); }).join('');
+      localStorage.setItem('lvyin_telemetry_id', id);
+    }
+
+    function readSave(){
+      var raw = localStorage.getItem('lvyin_autosave_v2');
+      if(!raw){
+        for(var i=1;i<=6;i++){
+          raw = localStorage.getItem('lvyin_save_v2_slot'+i) || raw;
+          if(raw) break;
+        }
+      }
+      if(!raw) return null;
+      try{ return JSON.parse(raw); }catch(e){ return null; }
+    }
+
+    function dateText(d){
+      if(typeof d==='string') return d;
+      if(d && typeof d==='object'){
+        var y=d.year||d.y, m=d.month||d.m, day=d.day||d.d;
+        if(y) return y+'-'+('0'+(m||1)).slice(-2)+'-'+('0'+(day||1)).slice(-2);
+      }
+      return '';
+    }
+
+    function collect(){
+      var s = readSave();
+      if(!s || !s.player) return null;
+      var p = s.player;
+      if(!p.attrs) return null;
+      var st = p.stats || {};
+      var career = st.career || {};
+      var season = st.season || {};
+      var club = st.club || {};
+      var nat = st.national || {};
+      var honours = p.honours && typeof p.honours==='object' ? p.honours : {};
+      var names = Object.keys(honours).slice(0,20).map(function(k){
+        return { name:k, count:Number(honours[k])||1 };
+      });
+      var log = Array.isArray(p.honourLog) ? p.honourLog : [];
+      var recent = log.slice(-12).map(function(h){
+        return { year:Number(h.year)||0, name:h.name||h.comp||h.key||'', team:h.team||'', cat:h.cat||'' };
+      });
+      var count = Object.keys(honours).reduce(function(a,k){ return a+(Number(honours[k])||1); },0);
+      var overall = 0;
+      try{ overall = Math.round(calcOverallFloat(p))||0; }catch(e){}
+      var seasonData = s.season || {};
+      return {
+        v:1,
+        anon:id,
+        build:(typeof BUILD_ID!=='undefined'?BUILD_ID:''),
+        date:dateText(s.date),
+        player:{
+          age:Number(p.age)||0,
+          nation:p.nation||'',
+          position:p.position||'',
+          role:p.role||'',
+          club:club.name||seasonData.playerClub||'',
+          league:club.league||seasonData.leagueName||'',
+          level:Number(club.level)||0,
+          overall:overall,
+          reputation:Number(p.reputation)||0,
+          coachTrust:Number(p.coachTrust)||0,
+          squadRank:Number(p.squadRank)||0,
+          chapters:Array.isArray(p.careerChapters)?p.careerChapters.length:0,
+          retired:!!p.retired,
+          season:{ appearances:Number(season.appearances)||0, goals:Number(season.goals)||0, assists:Number(season.assists)||0, minutes:Number(season.minutes)||0, motm:Number(season.motm)||0 },
+          career:{ appearances:Number(career.appearances)||0, goals:Number(career.goals)||0, assists:Number(career.assists)||0, minutes:Number(career.minutes)||0, motm:Number(career.motm)||0 },
+          national:{ caps:Number(nat.caps)||0, goals:Number(nat.goals)||0 },
+          honours:{ count:count, names:names, recent:recent }
+        }
+      };
+    }
+
+    var last = { sig:'', at:0 };
+    try{
+      var saved = JSON.parse(localStorage.getItem('lvyin_telemetry_last')||'{}');
+      if(saved && saved.sig){ last = saved; }
+    }catch(e){}
+
+    var sending = false;
+    function send(force){
+      if(sending) return;
+      var payload = collect();
+      if(!payload || !payload.player.club) return;
+      var sig = [payload.date, payload.player.club, payload.player.career.appearances, payload.player.career.goals, payload.player.overall, payload.player.honours.count].join('|');
+      var now = Date.now();
+      if(!force && now-last.at < 30000) return;
+      if(sig===last.sig && now-last.at < 10*60*1000) return;
+      last = { sig:sig, at:now };
+      try{ localStorage.setItem('lvyin_telemetry_last', JSON.stringify(last)); }catch(e){}
+      sending = true;
+      fetch('/api/telemetry',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify(payload),
+        keepalive:true
+      }).catch(function(){}).then(function(){ sending=false; });
+    }
+
+    setTimeout(function(){ send(false); }, 5000);
+    setInterval(function(){ send(false); }, 45000);
+    document.addEventListener('visibilitychange', function(){
+      if(document.visibilityState==='hidden') send(true);
+    });
+
+    window.lvyinTelemetry = {
+      send: function(){ send(true); },
+      optOut: function(){ localStorage.setItem('lvyin_telemetry_optout','1'); }
+    };
+
+    if(!localStorage.getItem('lvyin_telemetry_notice')){
+      localStorage.setItem('lvyin_telemetry_notice','1');
+      setTimeout(function(){
+        try{
+          if(typeof showToast==='function') showToast('匿名战绩统计：只上报俱乐部/数据/荣誉，不含姓名；网址加 ?notelemetry=1 可关闭','info',7000);
+        }catch(e){}
+      }, 9000);
+    }
+  }catch(e){}
+})();
+</script>
 </body>
 </html>
 

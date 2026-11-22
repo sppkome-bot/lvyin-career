@@ -25,3 +25,7 @@ npm-debug.log*
 Thumbs.db
 .vercel
 .env*
+
+# Local admin credential
+后台密码.txt
+后台密码*.txt
