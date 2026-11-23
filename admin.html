@@ -180,7 +180,7 @@
       var pos = (p.position || '') + (p.role ? ' · ' + p.role : '');
       var market = ((Number(p.marketValue) || 0) / 10000).toFixed(1);
       var hist = (p.seasonHistory || []).slice(-3).map(function(x){
-        return [x.year || '', x.club || '', (x.apps||0) + '/' + (x.goals||0) + '/' + (x.assists||0)].filter(Boolean).join(' ');
+        return esc([x.year || '', x.club || '', (x.apps||0) + '/' + (x.goals||0) + '/' + (x.assists||0)].filter(Boolean).join(' '));
       }).join('<br>');
       var hay = [p.club, p.league, pos, p.nation, honourNames].join(' ').toLowerCase();
       if(filter && hay.indexOf(filter) < 0) return;
