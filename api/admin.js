@@ -57,7 +57,22 @@ export default async function handler(req, res) {
   }
 
   blobs.sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime());
-  const picked = blobs.slice(0, limit);
+
+  const allAnons = new Set();
+  const latestByAnon = new Map();
+  for (const blob of blobs) {
+    const name = (blob.pathname.split('/').pop() || '');
+    const anon = name.split('-')[0];
+    if (/^[a-f0-9]{16,40}$/.test(anon)) {
+      allAnons.add(anon);
+      if (!latestByAnon.has(anon)) latestByAnon.set(anon, blob);
+    }
+  }
+
+  // 默认每个匿名玩家只取最新一条；all=1 时取最近 limit 条快照
+  const picked = req.query.all === '1'
+    ? blobs.slice(0, limit)
+    : Array.from(latestByAnon.values()).slice(0, limit);
 
   const rows = (
     await mapLimit(picked, 6, async (blob) => {
@@ -75,13 +90,6 @@ export default async function handler(req, res) {
       }
     })
   ).filter(Boolean);
-
-  const allAnons = new Set();
-  for (const blob of blobs) {
-    const name = (blob.pathname.split('/').pop() || '');
-    const anon = name.split('-')[0];
-    if (/^[a-f0-9]{16,40}$/.test(anon)) allAnons.add(anon);
-  }
 
   let visibleRows = rows;
   if (req.query.all !== '1') {

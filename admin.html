@@ -158,7 +158,7 @@
     fillChips('clubs', data.clubs);
     fillChips('leagues', data.leagues);
     fillChips('positions', data.positions);
-    $('shown').textContent = '（共 ' + (data.totalSnapshots || 0) + ' 条，显示最近 ' + (data.rows ? data.rows.length : 0) + ' 条）';
+    $('shown').textContent = '（共 ' + (data.totalSnapshots || 0) + ' 条，' + ($('all').checked ? '显示最近 ' + (data.rows ? data.rows.length : 0) + ' 条' : '显示 ' + (data.rows ? data.rows.length : 0) + ' 位玩家') + '）';
     renderRows(data.rows || []);
   }
 
