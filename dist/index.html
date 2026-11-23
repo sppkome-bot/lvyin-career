@@ -33763,7 +33763,7 @@ const randFloat = (min, max) => Math.random() * (max - min) + min;
 const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
 
 // ===================== 版本号（每次发版必改；sw.js 的 BUILD 必须与本值一致） =====================
-const BUILD_ID = '2026.11.13.226';
+const BUILD_ID = '2026.11.23.281';
 // 措施四：开发期横幅（仅 ?dev=1）
 if(typeof location!=='undefined' && /[?&]dev=1(?:&|$)/.test(location.search||'')){
   try{ console.log('%c[BUILD]','color:#0af',BUILD_ID); }catch(e){/*静默:日志*/}
@@ -41254,8 +41254,8 @@ function advanceDay(){
     p2YouthMarkOverride(p);
     triggerNationalCallup(); return;
   }
-  // 青年队征召窗口：每年 3 月 / 9 月 1 日；奇数年 3 月打一届 U19/U21 洲际赛，其余窗口为青年友谊赛
-  if(d.day===1 && (d.month===3||d.month===9) && !p.injury && p2YouthWindowTick(p)) return;
+  // 青年队征召窗口：每年 3/6/9 月 1 日；6 月只有青年国际赛事才触发，3/9 月无赛事时为友谊赛
+  if(d.day===1 && (d.month===3||d.month===6||d.month===9) && !p.injury && p2YouthWindowTick(p)) return;
   // 转会窗：冬窗/夏窗开启时，可能有俱乐部正式报价
   if(d.day===1 && p2TransferWindowCheck(p)) return;
   // 伤病时不能比赛（打封闭带伤坚持除外）；若逢比赛日则模拟球队本轮结果
@@ -45806,8 +45806,11 @@ function voiceRoleGroup(pos){
 function voiceFmt(s,map){
   return String(s).replace(/\{(\w+)\}/g,function(m,k){ return map[k]!==undefined?map[k]:m; });
 }
-function voicePick(p,pool,ctx){
-  const arr=Array.isArray(pool)?pool.filter(function(x){ return typeof x==='string'&&x; }):[];
+function voicePick(p,pool,ctx,guard){
+  let arr=Array.isArray(pool)?pool.filter(function(x){ return typeof x==='string'&&x; }):[];
+  // R280：传入 guard 时，先按「本场事实」筛掉会和数据打架的句子；
+  // 全部被筛掉则返回 ''，由调用方退回事实句，而不是硬塞一句假话。
+  if(typeof guard==='function') arr=arr.filter(function(x){ return guard(x); });
   if(!arr.length) return '';
   const v=voiceEnsure(p);
   if(!Array.isArray(v.recent)) v.recent=[];
@@ -45940,10 +45943,30 @@ function syncPenaltyVoice(m,won){
   if(String(e.title||'').indexOf('点球')<0) e.title=String(e.title||'')+tag;
   if(e.sub&&String(e.sub).indexOf('点球')<0) e.sub+=' · 点球大战'+(won?'胜出':'落败');
 }
+// R280：当整池引语都与本场数据矛盾时的事实兜底句。只引用 facts 里的字段。
+function voiceFactFallback(kind,tone,p,m,ctx){
+  const f=textFactPack(p,m,{played:true,rating:Number(ctx&&ctx.r)||0});
+  const mf=f.mf||{g:0,a:0,shots:0,onTarget:0,keyPasses:0};
+  const r=(ctx&&ctx.r)||'6.0';
+  if(kind==='coach'){
+    return tone==='crit'?`“评分${r}，今天没有达到要求，回去看录像。”`:`“${mf.g}球${mf.a}助，评分${r}，数据就摆在那里。”`;
+  }
+  if(kind==='mate') return `“他今天射门${mf.shots}次、关键传球${mf.keyPasses}次，我们都看在眼里。”`;
+  if(kind==='opponent') return `“他今天的评分是${r}，我们输在这一块。”`;
+  if(kind==='media') return `“${ctx&&ctx.name||'他'}本场评分${r}：射门${mf.shots}次（射正${mf.onTarget}次），关键传球${mf.keyPasses}次。”`;
+  if(kind==='fans') return tone==='crit'?`“${r}分，这表现说不过去。”`:`“${mf.g}球${mf.a}助，值回票价。”`;
+  if(kind==='net') return tone==='crit'?`“评分${r}，别再吹了。”`:`“${mf.g}球${mf.a}助，数据不会骗人。”`;
+  return '';
+}
 function buildMatchEntry(p,m,rating,played){
   const club=m&&m.isNational?((p.nation||'国家队')):voiceClub(p),opp=(m&&m.opponent)||'对手';
   const g=(m&&m.playerGoals)||0,a=(m&&m.playerAssists)||0;
   const ctx={name:p.name,club:club,opp:opp,g:g,a:a,r:(Number(rating)||6).toFixed(1)};
+  // R280：更衣室/发布会/媒体/球迷/网友的每一句话，先过本场事实校验；
+  // 被筛空时用下面的事实句兜底，避免「0 球却写绝杀」。
+  const facts=textFactPack(p,m,{played:!!played,rating:rating});
+  const gd=function(t){ return textClaimOK(t,facts); };
+  const fb=function(kind,tone){ return voiceFactFallback(kind,tone,p,m,ctx); };
   const score=voiceScore(m,rating,played);
   const tone=played?voiceTone(score,0):'mid';
   const quotes=[];
@@ -45954,9 +45977,9 @@ function buildMatchEntry(p,m,rating,played){
   if(!played){
     cText='“今天的选择是战术需要，他的机会会来的。训练里他一直是标准。”';
   }else{
-    cText=voicePick(p,VOICE_POOLS.coach[cTone],ctx);
+    cText=voicePick(p,VOICE_POOLS.coach[cTone],ctx,gd)||fb('coach',cTone);
     const rl=VOICE_ROLE_LINES[voiceRoleGroup(p.position)];
-    if(rl&&rl[cTone]) cText+=' '+voicePick(p,rl[cTone]);
+    if(rl&&rl[cTone]){ const extra=voicePick(p,rl[cTone],ctx,gd); if(extra) cText+=' '+extra; }
   }
   quotes.push({who:coachWho,meta:'赛后发布会',tone:cTone,text:cText});
   const mates=(p.npcWorld&&p.npcWorld.mates)||[];
@@ -45970,12 +45993,12 @@ function buildMatchEntry(p,m,rating,played){
   const mCtx=Object.assign({},ctx,{mate:mateName,pos:matePos});
   if(played){
     let mtTone=voiceTone(score,(mate?((mate.trust||50)-50)/150:0));
-    quotes.push({who:mateName+'（'+matePos+'）',meta:'更衣室',tone:mtTone,text:voicePick(p,VOICE_POOLS.mate[mtTone],mCtx)});
+    quotes.push({who:mateName+'（'+matePos+'）',meta:'更衣室',tone:mtTone,text:voicePick(p,VOICE_POOLS.mate[mtTone],mCtx,gd)||fb('mate',mtTone)});
   }
   const rival=p.rival;
   if(played&&rival&&rival.name&&m&&rival.club&&m.opponent===rival.club){
     const oTone=voiceTone(score,-0.2);
-    quotes.push({who:rival.name+'（'+rival.club+'）',meta:'混合采访区',tone:oTone,text:voicePick(p,VOICE_POOLS.opponent[oTone],ctx)});
+    quotes.push({who:rival.name+'（'+rival.club+'）',meta:'混合采访区',tone:oTone,text:voicePick(p,VOICE_POOLS.opponent[oTone],ctx,gd)||fb('opponent',oTone)});
   }
   let rep=null;
   try{ rep=p2PickReporter(p); }catch(e){/*静默:界面*/}
@@ -45984,7 +46007,7 @@ function buildMatchEntry(p,m,rating,played){
     const mdTone=voiceTone(score,((p.relationships.media||50)-50)/150);
     // R212：报道必须落到本场事实（比分/对手），不再只给一句评价
     const mdAnchor=voiceScoreLine(m);
-    quotes.push({who:mediaWho,meta:'赛后报道',tone:mdTone,text:(mdAnchor?mdAnchor+'。':'')+voicePick(p,VOICE_POOLS.media[mdTone],ctx)});
+    quotes.push({who:mediaWho,meta:'赛后报道',tone:mdTone,text:(mdAnchor?mdAnchor+'。':'')+(voicePick(p,VOICE_POOLS.media[mdTone],ctx,gd)||fb('media',mdTone))});
   }
   const special=(function(){
     if(!played) return null;
@@ -45994,15 +46017,15 @@ function buildMatchEntry(p,m,rating,played){
     if(m&&m.score&&Math.abs(m.score.home-m.score.away)>=4) return {who:'转播席解说',meta:'比赛直播',tone:'mid',pool:VOICE_SPECIALS.rout};
     return null;
   })();
-  if(special) quotes.push({who:special.who,meta:special.meta,tone:special.tone,text:voicePick(p,special.pool,ctx)});
+  if(special){ const sp=voicePick(p,special.pool,ctx,gd); if(sp) quotes.push({who:special.who,meta:special.meta,tone:special.tone,text:sp}); }
   const fTone=played?voiceTone(score,((p.fanApproval||50)-50)/120):(p.fanApproval>=60?'mid':'crit');
-  const fansText=played?voicePick(p,VOICE_POOLS.fans[fTone],ctx):'“花了钱来看他，结果90分钟没脱外套。”';
+  const fansText=played?(voicePick(p,VOICE_POOLS.fans[fTone],ctx,gd)||fb('fans',fTone)):'“花了钱来看他，结果90分钟没脱外套。”';
   quotes.push({who:'看台球迷',meta:(m&&m.isHome?club:'客场')+'看台',tone:fTone,text:fansText});
   const nTone=played?voiceTone(score,(((p.social&&p.social.sentiment)||50)-50)/120):'mid';
   let netText;
-  if(!played){ netText=voicePick(p,VOICE_SPECIALS.benched,ctx); }
-  else if(Math.random()<0.3){ netText=voicePick(p,VOICE_NONFAN,ctx); }
-  else { netText=voicePick(p,VOICE_POOLS.netizen[nTone],ctx); }
+  if(!played){ netText=voicePick(p,VOICE_SPECIALS.benched,ctx,gd)||'“连热身都没怎么热，教练到底怎么想的。”'; }
+  else if(Math.random()<0.3){ netText=voicePick(p,VOICE_NONFAN,ctx,gd)||fb('net',nTone); }
+  else { netText=voicePick(p,VOICE_POOLS.netizen[nTone],ctx,gd)||fb('net',nTone); }
   quotes.push({who:'网友 / 路人',meta:'社交媒体评论区',tone:nTone,text:netText});
   const eff=voiceEffects(score,played,m,p);
   return {
@@ -51570,6 +51593,8 @@ function acceptTransfer(i){
   p2InitClubStory(p);
   // R270：加盟即进入新援适应期，主界面给可见解释与可执行路径
   p2NewSigningStart(p,offer.club.name,offer.loan?'loan':'transfer');
+  // R280：转会是一次不可逆的选择，写入记忆，几周后在媒体回响里被重新提起
+  if(typeof p2RememberChoice==='function') p2RememberChoice(p,{kind:'transfer',label:(offer.loan?'租借加盟':'转会加盟')+offer.club.name,arc:'转会窗口',who:'经纪人'});
   p.transferNegotiation=null;
   Game.transferOffers=null;
   resetSeasonStatsAfterClubChange(p);
@@ -54247,6 +54272,40 @@ function p2YouthBand(age){
   if(a>=20&&a<=21) return 'U21';
   return '';
 }
+// R281：青年国际赛历。全部复用成年队的分组/淘汰引擎，只有年龄段、月份与赛制规模不同。
+// 每年 6 月：U17 世界杯（15–17）；偶数年 6 月：U20 世界杯（18–20）；
+// 3 月：奇数年 U19/U21 洲际杯、偶数年 U17 洲际杯；9 月：奥运前一年的 U23 洲际杯（奥预赛）。
+const YOUTH_COMPS=[
+  {key:'U17WC', band:'U17', base:'世界杯', ages:[15,17], month:6, cycle:1, size:24, groupCount:6, thirds:4, weight:40},
+  {key:'U20WC', band:'U20', base:'世界杯', ages:[18,20], month:6, cycle:2, parity:0, size:24, groupCount:6, thirds:4, weight:35},
+  {key:'U19CUP', band:'U19', base:'洲际', ages:[15,19], month:3, cycle:2, parity:1, size:16, groupCount:4, thirds:0, weight:30},
+  {key:'U21CUP', band:'U21', base:'洲际', ages:[20,21], month:3, cycle:2, parity:1, size:16, groupCount:4, thirds:0, weight:20},
+  {key:'U17CUP', band:'U17', base:'洲际', ages:[15,17], month:3, cycle:2, parity:0, size:16, groupCount:4, thirds:0, weight:25},
+  {key:'U23Q', band:'U23', base:'洲际', ages:[22,23], month:9, cycle:4, years:[2027,2031,2035,2039], size:16, groupCount:4, thirds:0, weight:30, qualifier:true}
+];
+function p2YouthCompYear(c,year){
+  const y=Number(year)||0;
+  if(!c||!y) return false;
+  if(Array.isArray(c.years)){
+    if(c.years.includes(y)) return true;
+    const last=c.years[c.years.length-1];
+    return y>last&&((y-last)%c.cycle===0);
+  }
+  if(c.cycle<=1) return true;
+  return y%c.cycle===(c.parity||0);
+}
+// 同一月份按权重只挑一项赛事，避免同窗重复征召
+function p2YouthCompFor(p,year,month){
+  const age=Number(p&&p.age)||0;
+  if(!age) return null;
+  const list=YOUTH_COMPS.filter(c=>c.month===Number(month)&&age>=c.ages[0]&&age<=c.ages[1]&&p2YouthCompYear(c,year));
+  list.sort((a,b)=>b.weight-a.weight);
+  return list[0]||null;
+}
+function p2YouthCompName(p,comp){
+  const base=comp.base==='世界杯'?'世界杯':nationMainTournament(p.nation);
+  return comp.band+base+(comp.qualifier?'（奥预赛）':'');
+}
 function p2YouthEnsure(p){
   if(!p) return null;
   if(!p.stats) p.stats={};
@@ -54256,11 +54315,18 @@ function p2YouthEnsure(p){
     // 旧档只补默认值，不补任何历史青年队数据
     nat.youth={caps:0,goals:0,assists:0,editions:0,editionsU19:0,editionsU21:0,titles:0,best:'',bestYear:0,last:null};
   }
+  const y=nat.youth;
+  // R281：旧档只补容器，不补历史数据
+  if(!y.byComp||typeof y.byComp!=='object') y.byComp={};
+  if(!Array.isArray(y.honours)) y.honours=[];
+  if(y.editionsU17===undefined) y.editionsU17=0;
+  if(y.editionsU20===undefined) y.editionsU20=0;
+  if(y.editionsU23===undefined) y.editionsU23=0;
   if(!p.youthIntl||typeof p.youthIntl!=='object'){
     p.youthIntl={calls:0,overrides:0,tournaments:0,lastWindow:'',last:'',history:[]};
   }
   if(!Array.isArray(p.youthIntl.history)) p.youthIntl.history=[];
-  return nat.youth;
+  return y;
 }
 function p2YouthWindowKey(){ return (Game.date.year||0)+'-'+(Game.date.month||0); }
 function p2YouthWindowCheck(p){
@@ -54290,27 +54356,35 @@ function p2YouthGoalShare(p,teamGoals){
   for(let i=0;i<n;i++) if(Math.random()<chance) g++;
   return g;
 }
-function p2YouthResultLabel(champion,koRound){
+function p2YouthResultLabel(champion,koNames,koRound,qualifiedKO){
   if(champion) return '冠军';
-  if(koRound<=0) return '小组赛';
-  if(koRound===1) return '八强';
-  if(koRound===2) return '四强';
-  return '亚军';
+  if(!qualifiedKO) return '小组赛';
+  const nm=(koNames&&koNames[koRound])||'';
+  const map={'决赛':'亚军','半决赛':'四强','1/4决赛':'八强','1/8决赛':'十六强'};
+  return map[nm]||'淘汰赛';
 }
-function p2YouthEdition(p,band,year){
+// 青年队单场评分：能力 + 本场进球 + 胜负，区间 5.4–9.6；只用于青年队文本与统计
+function p2YouthRating(p,goals,win){
+  const ovr=Number(calcOverall(p))||10;
+  const base=6.0+(ovr-10)*0.10+(Number(goals)||0)*0.55+(win?0.25:-0.15);
+  return Math.round(clamp(base+Math.random()*0.6-0.3,5.4,9.6)*10)/10;
+}
+// 一届青年赛事：分组 + 淘汰全部真实结算；逐场记录对手/比分/点球/本人进球/评分
+function p2YouthCompEdition(p,comp,year){
   const nation=p.nation;
-  const baseComp=nationMainTournament(nation);
+  const compName=p2YouthCompName(p,comp);
+  const baseComp=comp.base==='世界杯'?'世界杯':nationMainTournament(nation);
   const pool=nationCompPool(baseComp,nation);
-  const size=16;
   const myRep=getNationalStrength(nation,year);
+  const size=Number(comp.size)||16;
   const field=buildNatField(pool,size,{name:nation,rep:myRep});
   if(!field) return null;
-  const groups=buildNatGroups(field,size,4);
+  Game.log.unshift(`[${dateStr()}] 🌱 你收到${compName}${year}的征召，入选${nation}${comp.band}名单。`);
+  const groups=buildNatGroups(field,size,Number(comp.groupCount)||4);
   const myIdx=Math.max(0,groups.findIndex(g=>g.teams.some(t=>t.isPlayer)));
-  const myGroup=groups[myIdx];
+  const koNames=comp.base==='世界杯'?['1/8决赛','1/4决赛','半决赛','决赛']:natCompMeta(baseComp).koNames;
   const path=[];
-  let apps=0,goals=0,koRound=0,champion=false;
-  // 小组赛：复用成年队的分组表与真实比分引擎，一次性结算全部场次
+  let apps=0,goals=0,ratingSum=0,champion=false,qualifiedKO=false,lastKO='';
   groups.forEach((g,i)=>{
     g.fixtures.forEach(round=>round.forEach(([h,a])=>{
       const [hg,ag]=simGroupScore(natTeamRep({groups},h)+2,natTeamRep({groups},a));
@@ -54318,76 +54392,128 @@ function p2YouthEdition(p,band,year){
       if(i===myIdx&&(h===nation||a===nation)){
         apps++;
         const mine=h===nation?hg:ag;
-        goals+=p2YouthGoalShare(p,mine);
-        path.push({round:'小组赛',opp:h===nation?a:h,score:`${hg}-${ag}`,win:(h===nation?hg>ag:ag>hg)});
+        const myGoals=p2YouthGoalShare(p,mine);
+        const win=(h===nation?hg>ag:ag>hg);
+        const rating=p2YouthRating(p,myGoals,win);
+        goals+=myGoals; ratingSum+=rating;
+        path.push({round:'小组赛',opp:h===nation?a:h,score:`${hg}-${ag}`,win,goals:myGoals,rating});
       }
     }));
   });
-  const koNames=natCompMeta(baseComp).koNames;
-  const comp={groups,roundNames:koNames};
-  buildNatBracket(comp);
+  const c={groups,roundNames:koNames};
+  buildNatBracket(c);
+  qualifiedKO=c.bracket.rounds[0].some(bm=>bm.a===nation||bm.b===nation);
   let guard=0;
-  while(guard++<6){
-    const rd=comp.bracket.rounds[comp.bracket.roundIdx]||[];
+  while(guard++<8){
+    const rd=c.bracket.rounds[c.bracket.roundIdx]||[];
     rd.forEach(bm=>{
       if(bm.winner) return;
-      const ra=natTeamRep(comp,bm.a)+2, rb=natTeamRep(comp,bm.b);
+      const ra=natTeamRep(c,bm.a)+2, rb=natTeamRep(c,bm.b);
       const [hg,ag]=simGroupScore(ra,rb);
       bm.score=[hg,ag];
       if(hg===ag){ const pen=penaltyShootoutWinner(bm.a,bm.b,ra,rb); bm.pens=pen.pens; bm.winner=pen.winner; }
       else bm.winner=hg>ag?bm.a:bm.b;
       if(bm.a===nation||bm.b===nation){
         apps++;
-        goals+=p2YouthGoalShare(p,bm.a===nation?hg:ag);
-        path.push({round:koNames[comp.bracket.roundIdx]||'',opp:bm.a===nation?bm.b:bm.a,score:`${hg}-${ag}`,
-          pens:bm.pens?bm.pens.join('-'):'',win:bm.winner===nation});
+        const mine=bm.a===nation?hg:ag;
+        const myGoals=p2YouthGoalShare(p,mine);
+        const win=bm.winner===nation;
+        const rating=p2YouthRating(p,myGoals,win);
+        goals+=myGoals; ratingSum+=rating;
+        path.push({round:koNames[c.bracket.roundIdx]||'',opp:bm.a===nation?bm.b:bm.a,score:`${hg}-${ag}`,
+          pens:bm.pens?bm.pens.join('-'):'',win,goals:myGoals,rating});
+        if(!win) lastKO=koNames[c.bracket.roundIdx]||'';
       }
     });
-    if(comp.bracket.roundIdx>=koNames.length-1){ comp.bracket.champion=rd[0].winner; champion=comp.bracket.champion===nation; break; }
-    koRound=comp.bracket.roundIdx+1;
-    if(!advanceNatBracket(comp)) break;
+    if(c.bracket.roundIdx>=koNames.length-1){ c.bracket.champion=rd[0]&&rd[0].winner; champion=c.bracket.champion===nation; break; }
+    if(!advanceNatBracket(c)) break;
   }
+  const koIdx=lastKO?Math.max(0,koNames.indexOf(lastKO)):0;
+  const label=p2YouthResultLabel(champion,koNames,koIdx,qualifiedKO||champion);
   const y=p2YouthEnsure(p);
   y.caps+=apps; y.goals+=goals;
   y.editions++;
-  if(band==='U19') y.editionsU19++; else y.editionsU21++;
-  const label=p2YouthResultLabel(champion,koRound);
-  if(champion) y.titles++;
-  const PRI={'冠军':0,'亚军':1,'四强':2,'八强':3,'小组赛':4};
-  if(!y.best||(PRI[label]||9)<(PRI[y.best]||9)){ y.best=label; y.bestYear=year; }
-  const tour=`${band}${baseComp}`;
-  y.last={year,band,tournament:tour,apps,goals,best:label,champion};
+  if(comp.band==='U19') y.editionsU19++;
+  else if(comp.band==='U21') y.editionsU21++;
+  else if(comp.band==='U17') y.editionsU17++;
+  else if(comp.band==='U20') y.editionsU20++;
+  else if(comp.band==='U23') y.editionsU23++;
+  const bc=y.byComp[compName]||(y.byComp[compName]={editions:0,apps:0,goals:0,titles:0,best:'',bestYear:0});
+  bc.editions++; bc.apps+=apps; bc.goals+=goals;
+  if(champion){ y.titles++; bc.titles++; }
+  const PRI={'冠军':0,'亚军':1,'四强':2,'八强':3,'十六强':4,'淘汰赛':4,'小组赛':5};
+  if(!y.best||(PRI[label]!==undefined?PRI[label]:9)<(PRI[y.best]!==undefined?PRI[y.best]:9)){ y.best=label; y.bestYear=year; }
+  if(!bc.best||(PRI[label]!==undefined?PRI[label]:9)<(PRI[bc.best]!==undefined?PRI[bc.best]:9)){ bc.best=label; bc.bestYear=year; }
+  const avg=apps?Math.round(ratingSum/apps*10)/10:0;
+  y.last={year,band:comp.band,tournament:compName,apps,goals,best:label,champion,rating:avg};
   p.youthIntl.tournaments++;
-  p.youthIntl.history.unshift({year,band,tournament:tour,apps,goals,best:label,champion});
+  const rec={year,band:comp.band,comp:compName,tournament:compName,nation,apps,goals,best:label,champion,rating:avg,
+    path:path.slice(0,12)};
+  p.youthIntl.history.unshift(rec);
   if(p.youthIntl.history.length>12) p.youthIntl.history.length=12;
-  Game.log.unshift(`[${dateStr()}] 🌱 ${tour} ${year}：${nation}${label}，你出场${apps}场打进${goals}球。`);
-  return Object.assign({path},y.last);
+  // 冠亚军进青年荣誉、荣誉墙与赛季总结（名称、年份、球队全部来自本届真实结果）
+  if(champion||label==='亚军'){
+    y.honours.unshift({year,comp:compName,result:champion?'冠军':'亚军'});
+    if(y.honours.length>8) y.honours.length=8;
+    recordHonour(p,'youth_'+String(comp.key||'cup').toLowerCase(),
+      {cat:'special',name:compName+(champion?'冠军':'亚军'),team:nation,year,seasonYear:year,comp:compName});
+  }
+  // 奥预赛夺冠 → 成年队奥运正赛资格（沿用既有 olympicQualified 通路）
+  if(comp.qualifier&&champion){ p.p2Flags=p.p2Flags||{}; p.p2Flags.olympicQualified=true; }
+  Game.log.unshift(`[${dateStr()}] 🌱 ${compName} ${year}：${nation}${label}，你出场${apps}场打进${goals}球${avg?`，场均评分${avg}`:''}。`);
+  return rec;
 }
-// 每年 3 月 / 9 月 1 日：奇数年 3 月打一届洲际赛，其余窗口为青年友谊赛
+// R281：每年 3/6/9 月 1 日检查青年国际赛事；3/9 月无赛事时安排一场青年友谊赛。
+// 赛事与友谊赛都从同一份赛历与真实结算产出，不再写死任何结果。
 function p2YouthWindowTick(p){
-  const band=p2YouthWindowCheck(p);
-  if(!band) return false;
+  if(!p||!p.nation||!p.age) return false;
   p2YouthEnsure(p);
+  if(p.youthIntl.lastWindow===p2YouthWindowKey()) return false;
+  const year=Game.date.year, month=Game.date.month;
+  const comp=p2YouthCompFor(p,year,month);
+  const band=p2YouthBand(p.age);
+  if(!comp&&!band) return false;
+  if(!comp&&month!==3&&month!==9) return false;
   p.youthIntl.lastWindow=p2YouthWindowKey();
   p.youthIntl.calls++;
   p.youthIntl.last='';
-  if(Game.date.month===3&&Game.date.year%2===1){ p2YouthEdition(p,band,Game.date.year); return true; }
+  if(comp) return !!p2YouthCompEdition(p,comp,year);
   const g=p2YouthGoalShare(p,1);
   const y=p.stats.national.youth;
   y.caps++; y.goals+=g;
-  y.last={year:Game.date.year,band,tournament:`${band}友谊赛`,apps:1,goals:g,best:'友谊赛',champion:false};
+  y.last={year,band,tournament:`${band}友谊赛`,apps:1,goals:g,best:'友谊赛',champion:false};
   Game.log.unshift(`[${dateStr()}] 🌱 你入选${band}青年队，参加一场国际青年友谊赛（1场${g}球）。`);
   return true;
 }
 // 生涯总览「🌍 国家队生涯」下的青年队小节；asCard=true 时用于 showNational 独立卡片
+// R281：分赛事数据、青年荣誉、最近 3 届报道与最近一届逐场战报全部由真实记录渲染
 function p2YouthHtml(p,asCard){
   const y=p2YouthEnsure(p);
-  const last=y.last?`${y.last.tournament} ${y.last.year} · ${y.last.apps}场 ${y.last.goals}球`:'—';
-  const body=`<h3 style="margin-top:10px;">🌱 青年队（U19 / U21）</h3>
-    <div class="stat-row"><span class="stat-label">届数</span><span class="stat-value">${y.editions} 届（U19 ${y.editionsU19} / U21 ${y.editionsU21}）</span></div>
+  const y2=p.youthIntl||{};
+  const last=y.last?`${y.last.tournament} ${y.last.year} · ${y.last.apps}场 ${y.last.goals}球${y.last.rating?` · 场均${y.last.rating}`:''}`:'—';
+  const compRows=Object.entries(y.byComp||{}).map(([n,c])=>
+    `<div class="stat-row"><span class="stat-label">${n}</span><span class="stat-value">${c.editions||0} 届 · ${c.apps||0} 场 ${c.goals||0} 球${c.titles?` · ${c.titles} 冠`:''}${c.best?` · 最好${c.best}`:''}</span></div>`).join('');
+  const honourRows=(y.honours||[]).slice(0,4).map(h=>
+    `<div style="font-size:12px;color:#fbbf24;line-height:1.7;">🏆 ${h.year} ${h.comp} · ${h.result}</div>`).join('');
+  const reportRows=(y2.history||[]).slice(0,3).map(h=>{
+    const parts=[`${h.year} ${h.comp}`,h.best,`${h.apps} 场 ${h.goals} 球`];
+    if(h.rating) parts.push(`场均 ${h.rating}`);
+    const m=(h.path&&h.path.length)?h.path[h.path.length-1]:null;
+    if(m) parts.push(`${m.round} ${m.score} ${m.opp}`);
+    return `<div style="font-size:12px;color:#a9b4d6;line-height:1.8;">📰 ${parts.join(' · ')}</div>`;
+  }).join('');
+  const latest=(y2.history&&y2.history[0]&&Array.isArray(y2.history[0].path))?y2.history[0].path.slice(-5):[];
+  const matchRows=latest.map(m=>
+    `<div class="stat-row"><span class="stat-label">${m.round} · ${m.opp}${m.pens?`（点球${m.pens}）`:''}</span><span class="stat-value">${m.score} · ${m.goals}球 · ${m.rating}分</span></div>`).join('');
+  const body=`<h3 style="margin-top:10px;">🌱 青年队（U17 / U19 / U20 / U21 / U23）</h3>
+    <div class="stat-row"><span class="stat-label">届数</span><span class="stat-value">${y.editions} 届（U17 ${y.editionsU17||0} / U19 ${y.editionsU19} / U20 ${y.editionsU20||0} / U21 ${y.editionsU21} / U23 ${y.editionsU23||0}）</span></div>
     <div class="stat-row"><span class="stat-label">场次 / 进球</span><span class="stat-value">${y.caps} 场 / ${y.goals} 球</span></div>
     <div class="stat-row"><span class="stat-label">最好成绩</span><span class="stat-value">${y.best?`${y.best}${y.bestYear?`（${y.bestYear}）`:''}`:'—'}</span></div>
-    <div class="stat-row"><span class="stat-label">最近一次</span><span class="stat-value">${last}</span></div>`;
+    <div class="stat-row"><span class="stat-label">最近一次</span><span class="stat-value">${last}</span></div>
+    ${compRows?`<h3 style="margin-top:10px;">分赛事</h3>${compRows}`:''}
+    ${honourRows?`<h3 style="margin-top:10px;">青年荣誉</h3>${honourRows}`:''}
+    ${reportRows?`<h3 style="margin-top:10px;">青年队报道</h3>${reportRows}`:''}
+    ${matchRows?`<h3 style="margin-top:10px;">最近一届逐场</h3>${matchRows}`:''}`;
   return asCard?`<div class="card">${body}</div>`:body;
 }
 
@@ -56132,14 +56258,14 @@ const STORY_LINES=[
      choices:[
       {label:'主动后撤做球',eff:{rel:10,apps:-2,fans:2,flag:'selfless'},msg:'他两次前插都拿到了球，回头冲你竖拇指。'},
       {label:'坚持抢前点',eff:{rel:-6,form:3,flag:'selfish'},msg:'教练在战术板上敲了两下：“你们两个，分开站。”'}]},
-    {key:'b3',title:'第八十八分钟',text:'主场 1-1，第 88 分钟，记分牌上的补时是 4 分钟。你在禁区右侧拿球，{TM} 从后点插上，门将已经出击到小禁区线上。看台安静了一瞬，只剩鞋钉刮草的声音。你余光看见他举手，又看见门将的重心往近角偏了半步。\n\n球在你脚下，防守球员离你 1 米 2。横传的线路要绕过一名后卫的脚尖，打近角的角度只有半个球门。这一脚之后，记分牌、他本赛季的进球数、你们两个人的位置，都会跟着变。',
+    {key:'b3',title:'第八十八分钟',text:'主场作战，第 88 分钟，记分牌上的补时是 4 分钟。你在禁区右侧拿球，{TM} 从后点插上，门将已经出击到小禁区线上。看台安静了一瞬，只剩鞋钉刮草的声音。你余光看见他举手，又看见门将的重心往近角偏了半步。\n\n球在你脚下，防守球员离你 1 米 2。横传的线路要绕过一名后卫的脚尖，打近角的角度只有半个球门。这一脚之后，记分牌、他本赛季的进球数、你们两个人的位置，都会跟着变。',
      altWhen:[{flag:'talked',text:'你想起来昨晚纸巾上的那条线——他跑后点，你负责把球送过去。'},
        {flag:'quietRoom',text:'他喊了一声你的名字，声音被看台的鼓点盖住了一半。'}],
      choices:[
       {label:'横传后点',eff:{rel:12,media:3,fans:5,apps:2,flag:'assist'},msg:'球进了。他先指向你，才转身跑向看台。'},
       {label:'自己打近角',eff:{rel:-10,media:6,fans:-2,form:4,flag:'shoot'},msg:'门将碰到了一点，球擦柱而出。他摊开手，没有回头。'}]},
     // Round 63：补齐第 5 拍，避免队友线只有 4 拍、弧线缺「转」
-    {key:'b3b',title:'他伤停的那六周',text:'{TM} 在八月的训练里被铲翻，脚踝肿成一只馒头，队医给的恢复期是六周。你顶了他的位置，连续三场首发，场均跑了 10.8 公里。第六周，他回到训练场，站在边线看你跑战术，没有说话。训练背心的号码被汗浸成了深色，他手里拎着那双旧球鞋。\n\n分组对抗马上开始，教练把主力背心发到你手上，剩最后一件。{TM} 站在替补那一侧，鞋带系到一半停住了。你要在哨响前决定，这件背心给谁。',
+    {key:'b3b',title:'他伤停的那六周',text:'{TM} 在八月的训练里被铲翻，脚踝肿成一只馒头，队医给的恢复期是六周。你顶了他的位置，连续三场首发，近 5 场平均评分 {RATING}。第六周，他回到训练场，站在边线看你跑战术，没有说话。训练背心的号码被汗浸成了深色，他手里拎着那双旧球鞋。\n\n分组对抗马上开始，教练把主力背心发到你手上，剩最后一件。{TM} 站在替补那一侧，鞋带系到一半停住了。你要在哨响前决定，这件背心给谁。',
      altWhen:[{flag:'assist',text:'他把球鞋放在你柜子边：“那脚球我看了三遍，明天你继续首发。”'},
        {flag:'shoot',text:'他什么也没说，只在你跑过边线时把训练背心递了过来。'}],
      choices:[
@@ -56160,7 +56286,7 @@ const STORY_LINES=[
       {label:'替他争取留下',eff:{rel:10,media:3,fans:2,transfer:-2,flag:'keepHim'},msg:'你把降薪申请推回去：“这份我来签。”'},
       {label:'劝他去能踢上球的地方',eff:{rel:6,morale:-3,flag:'letGo'},msg:'他沉默了一会儿，说：“你也这么想，那就走吧。”'},
       {label:'不表态',eff:{rel:-8,stress:2,flag:'neutralP'},msg:'转会窗最后一天，他的柜子空了。'}]},
-    {key:'b6',title:'最后一次同队',text:'联赛最后一轮，是你们同队的最后一场。第 78 分钟，裁判指向点球点，比分 1-1。{TM} 站在球前，这是他在这里最后一次触球的机会，队内射手榜上他和别人差 1 球。\n\n看台上已经有人举起他的横幅。你把球抱起来，走过去问他：“你来？”他没有伸手，也没有摇头。',
+    {key:'b6',title:'最后一次同队',text:'联赛最后一轮，是你们同队的最后一场。第 78 分钟，裁判指向点球点，比分胶着。{TM} 站在球前，这是他在这里最后一次触球的机会，射手榜上的名次就悬在这一脚。\n\n看台上已经有人举起他的横幅。你把球抱起来，走过去问他：“你来？”他没有伸手，也没有摇头。',
      altWhen:[{flag:'keepHim',text:'他留下了半个赛季，但合同还是走到了最后一年。'},
        {flag:'letGo',text:'他去了另一支球队，半个赛季进了 7 球，这场是回访。'}],
      choices:[
@@ -56182,7 +56308,7 @@ const STORY_LINES=[
      // 国家队经历只是更早入口；没有国家队的中下游老将（生涯≥120 场）同样能触发母队线
      return !s.lines.hometown&&Number(p.age||0)>=22&&momOk&&(caps>=1||called||career>=120); },
    beats:[
-    {key:'b1',title:'母队来电',text:'周一下午三点十七分，一个陌生号码打进来。对方是母队的总经理，声音很急：“我们在第三级别，差 4 分保级，还剩 9 轮。你愿意回来踢半个赛季吗？”电话那头有打印机的声音，还有人在喊他的名字。你握着手机站在训练场边，草皮上还留着你刚踩出的脚印。\n\n你的合同里有一条租借条款，经纪人今天不在城里；母队那边等着答复，最晚周四训练前。你要在电话里给出一个方向，或者至少给一个时间。',
+    {key:'b1',title:'母队来电',text:'周一下午三点十七分，一个陌生号码打进来。对方是母队的总经理，声音很急：“我们在第三级别，还在保级区边上，还剩 9 轮。你愿意回来踢半个赛季吗？”电话那头有打印机的声音，还有人在喊他的名字。你握着手机站在训练场边，草皮上还留着你刚踩出的脚印。\n\n你的合同里有一条租借条款，经纪人今天不在城里；母队那边等着答复，最晚周四训练前。你要在电话里给出一个方向，或者至少给一个时间。',
      choices:[
       {label:'接电话，听完计划',eff:{rel:5,fans:4,morale:4,flag:'call'},msg:'他说完停了两秒：“你不用现在答应。”'},
       {label:'让经纪人回绝',eff:{rel:-4,fans:-6,media:2,stress:-2,flag:'declineHome'},msg:'当晚评论区出现了你的名字，后面跟着问号。'}]},
@@ -56662,7 +56788,17 @@ function p2StoryEffChips(eff){ if(!eff) return ''; const out=[];
 function p2StoryFill(txt,p,S){
   const st=p2StoryEnsure(p); const tm=(st.teammateName)||'林锐';
   const riv=(st.rivalName)||'城南 9 号'; const agt=((p.agent&&p.agent.name)||'老陈');
-  return String(txt||'').replace(/\{TM\}/g,tm).replace(/\{RIV\}/g,riv).replace(/\{AGT\}/g,agt).replace(/\{CLUB\}/g,((p.stats&&p.stats.club&&p.stats.club.name)||'俱乐部'));
+  // R280：剧情文本可用的真实数据 token。比分/排名/个人数据都取当前存档，不写死。
+  const sea=textFactSeason(p), rank=textFactRank(p), form=Number(p.currentForm)||0;
+  const last=(p.matchLog&&p.matchLog[0])||null;
+  const lastScore=last?`${last.homeGoals}-${last.awayGoals}`:'';
+  const inj=(p.injury&&String(p.injury.name||p.injury.type||'伤停'))||'健康';
+  return String(txt||'').replace(/\{TM\}/g,tm).replace(/\{RIV\}/g,riv).replace(/\{AGT\}/g,agt)
+    .replace(/\{CLUB\}/g,((p.stats&&p.stats.club&&p.stats.club.name)||'俱乐部'))
+    .replace(/\{APPS\}/g,sea.apps).replace(/\{GOALS\}/g,sea.goals).replace(/\{ASSISTS\}/g,sea.assists)
+    .replace(/\{RATING\}/g,form?form.toFixed(1):'—').replace(/\{RANK\}/g,rank?'第'+rank:'—')
+    .replace(/\{AGE\}/g,Number(p.age)||'—').replace(/\{SCORE\}/g,lastScore||'比分胶着')
+    .replace(/\{LASTOPP\}/g,(last&&last.opponent)||'对手').replace(/\{INJ\}/g,inj);
 }
 function p2StoryApplyEffects(p,S,eff){
   if(!eff) return {};
@@ -56717,6 +56853,8 @@ function p2StoryChoose(id,opt,raw){
   const ch=(beat.choices||[])[opt]; if(!ch) return {ok:false,reason:'choice'};
   const eff=ch.eff||{};
   const done=p2StoryApplyEffects(p,S,eff);
+  // R280：主线选择写进统一的选择记忆，几周后由回响场景翻出来（和支线/更衣室同一套机制）
+  if(typeof p2RememberChoice==='function') p2RememberChoice(p,{kind:'story',label:ch.label||'',arc:L.name,who:'',note:beat.title||''});
   S.lastFired=p2StoryWeekKey(); S.ignored=0; S.lastBeatSeason=seasonNow;
   let finished=false;
   const nxt=ch.next||eff.next;
@@ -57006,6 +57144,10 @@ function p2StoryCardHtml(p){
   const active=STORY_LINES.filter(L=>{ const x=s.lines[L.id]; return x&&x.status==='active'; });
   if(!active.length) return h;
   h+=`<div class="card" style="border-color:rgba(34,211,238,.45);"><div class="card-head"><h3>🎭 剧情线</h3><span class="card-date">${active.length}/${P2_STORY_ACTIVE_CAP} 活跃</span></div>`;
+  // R280：剧情卡顶部固定一条真实面板，读者能立刻核对剧情里的数字和存档是否一致
+  const _sea=textFactSeason(p), _rk=textFactRank(p), _form=Number(p.currentForm)||0;
+  const _inj=(p.injury&&String(p.injury.name||p.injury.type||'伤停'))||'健康';
+  h+=`<div style="font-size:11px;color:#94a3b8;background:rgba(148,163,184,.08);border:1px solid rgba(148,163,184,.18);border-radius:8px;padding:6px 8px;margin:2px 0 4px;">📊 当前面板：本季 ${_sea.apps} 场 ${_sea.goals} 球 ${_sea.assists} 助 · 评分 ${_form?_form.toFixed(1):'—'} · 联赛 ${_rk?'第'+_rk:'—'} · 年龄 ${Number(p.age)||'—'} · 状态 ${esc(_inj)}</div>`;
   for(const L of active){
     const S=s.lines[L.id]; const beat=p2StoryBeat(L,S); if(!beat) continue;
     // R118：选项是否可推进由真实拦截条件决定（冷却/本季额度/单线额度），不再只按冷却判断；
@@ -59275,6 +59417,10 @@ function evaluateTrainingWeek(p,tp){
   const effective=all.filter(s=>!s.injurySkip&&!s.matchSkip);
   const planned=effective.length;
   const done=effective.filter(s=>s.done).length;
+  // R280：把「练了什么」记成可追溯的倾向，供后续媒体/剧情回响引用
+  const mix={};
+  effective.forEach(s=>{ if(s&&s.type) mix[s.type]=(mix[s.type]||0)+1; });
+  const focus=Object.keys(mix).sort((a,b)=>mix[b]-mix[a])[0]||'';
   // Round 9：上周训练负荷结算。过载与欠练都落到现有体能/锐利度/教练信任，不新增体力条
   const L=p.trainingLoad||null;
   let loadFb='';
@@ -59301,7 +59447,7 @@ function evaluateTrainingWeek(p,tp){
   }
   if(!planned){
     const noPlan=injurySkips?'上周因伤停跳过训练计划，教练组没有追究。':'上周没有安排训练计划。';
-    tp.lastWeek={planned:0,done:0,feedback:noPlan,load:L?L.load:0,loadText:loadFb};
+    tp.lastWeek={planned:0,done:0,feedback:noPlan,load:L?L.load:0,loadText:loadFb,types:{},focus:''};
     Game.log.unshift(`[${dateStr()}] 📅 ${noPlan}${loadFb}`);
     return;
   }
@@ -59320,8 +59466,18 @@ function evaluateTrainingWeek(p,tp){
     fxBump(p,'condition.morale',-2,60,0,100);
     fb='教练提醒你训练量不足，状态和信任都在往下掉。';
   }
-  tp.lastWeek={planned,done,feedback:fb,load:L?L.load:0,loadText:loadFb};
+  tp.lastWeek={planned,done,feedback:fb,load:L?L.load:0,loadText:loadFb,types:mix,focus};
   Game.log.unshift(`[${dateStr()}] 📅 上周训练计划完成 ${done}/${planned}：${fb} ${loadFb}`);
+  // 训练倾向每 3 周最多留一次回响，避免把选择记忆挤满
+  try{
+    const today=daySerial(Game.date);
+    p.p2Flags=p.p2Flags||{};
+    if(focus&&mix[focus]>=2&&typeof p2RememberChoice==='function'&&(!p.p2Flags.trainEchoDay||today-p.p2Flags.trainEchoDay>=21)){
+      p2RememberChoice(p,{kind:'training',label:(TRAINING_TYPES[focus]&&TRAINING_TYPES[focus].name)||focus,arc:'周训练计划',
+        note:`上周计划 ${planned} 节、完成 ${done} 节，其中「${(TRAINING_TYPES[focus]&&TRAINING_TYPES[focus].name)||focus}」占 ${mix[focus]} 节。`});
+      p.p2Flags.trainEchoDay=today;
+    }
+  }catch(e){ /* 静默:回响非核心路径 */ }
 }
 // 今天是否有一线队比赛（联赛/杯赛/超级杯）：比赛日不安排计划训练，避免赛前掉体能或训练受伤
 function fixtureToday(){
@@ -59745,6 +59901,8 @@ function startPosTrain(pos){
   const weeks=p2PosTrainWeeks(p,pos);
   p.posTrain={pos,weeksLeft:weeks,total:weeks,startYear:Game.date.year};
   Game.log.unshift(`[${dateStr()}] 🧭 开始位置改造：${POSITIONS[pos].name}，预计${weeks}周，期间训练成长 -30%。`);
+  // R280：位置改造是会改写下场角色的选择，进记忆，之后由回响场景提起
+  if(typeof p2RememberChoice==='function') p2RememberChoice(p,{kind:'position',label:'开始把位置改造成'+POSITIONS[pos].name,arc:'位置改造',who:'教练'});
   showToast(`开始改造${POSITIONS[pos].name}`,'success');
   saveGame(undefined,true); showAttributes();
 }
@@ -59766,6 +59924,7 @@ function startPosExtra(pos){
   const weeks=p2PosTrainWeeks(p,pos);
   p.posTrain={pos,weeksLeft:weeks,total:weeks,startYear:Game.date.year,third:true};
   Game.log.unshift(`[${dateStr()}] 🧭 开始第三位置改造：${POSITIONS[pos].name}，从 0 开始，预计${weeks}周。`);
+  if(typeof p2RememberChoice==='function') p2RememberChoice(p,{kind:'position',label:'开始练第三位置'+POSITIONS[pos].name,arc:'位置改造',who:'教练'});
   showToast(`开始练${POSITIONS[pos].name}`,'success');
   saveGame(undefined,true);
   showPosTrain();
@@ -71429,6 +71588,27 @@ const P2_ECHO_TEMPLATES={
   npc:[
     {title:'👥 他还记得',art:'tunnel',text:'{who}在训练结束后走过来，提起几周前那件事："你当时说「{label}」。我一直记着。"'},
     {title:'👥 关系的变化',art:'tactics',text:'更衣室里有人小声议论你几周前对{who}的态度。原话是「{label}」，传了几个人之后，味道变了。'}
+  ],
+  // R280：主线选择、发布会表态、训练倾向，都会在几周后被翻出来，并带上当前的赛季数据
+  story:[
+    {title:'📰 主线选择的回声',art:'press',text:'几周前在「{arc}」里，你选了「{label}」。今天有记者把它翻出来，问现在的你后不后悔。'},
+    {title:'🎭 那条路还在走',art:'tactics',text:'{coach}在训练后提起「{arc}」里的那次选择：「{label}」。他说，队里后来很多事都从那天开始。'}
+  ],
+  press:[
+    {title:'📰 你自己说过的话',art:'press',text:'上一次发布会，你留下的话是「{label}」。今天记者又把它举到你面前："现在还是这个说法吗？"'},
+    {title:'📰 标题被翻出来了',art:'press',text:'媒体翻出你那句「{label}」，配上了你最近的比赛数据，标题写得很直接。'}
+  ],
+  training:[
+    {title:'🏃 训练场上的痕迹',art:'tactics',text:'教练组回看训练数据时提到，这段时间你把重心放在「{label}」上。{note}'},
+    {title:'🏃 练什么，比赛里看得见',art:'tactics',text:'{coach}说，最近你在「{label}」上花的功夫，已经在比赛里显出来了。'}
+  ],
+  transfer:[
+    {title:'🔁 那次转会的回声',art:'transfer',text:'几周前你做了决定：{label}。今天有记者重提那天的电话，问你有没有后悔。'},
+    {title:'🔁 新东家的评价',art:'transfer',text:'更衣室里有人提起你刚来时的样子：「{label}」这个决定，现在看是对是错，比赛会说话。'}
+  ],
+  position:[
+    {title:'🧭 位置改造的回声',art:'tactics',text:'训练课结束后，教练又提起那次决定：「{label}」——现在看，你在新位置上的理解比预想快。'},
+    {title:'🧭 新位置的代价',art:'tactics',text:'有人问你后不后悔当初「{label}」。你没直接回答，只说了一句：位置是踢出来的。'}
   ]
 };
 function p2RememberChoice(p,info){
@@ -71440,7 +71620,7 @@ function p2RememberChoice(p,info){
   const first=p.choiceMemory[0];
   if(first&&first.d===today&&first.label===label.slice(0,40)) return;
   p.choiceMemory.unshift({d:today,kind:info.kind||'arc',route:info.route||'self',
-    label:label.slice(0,40),arc:info.arc||'',who:info.who||'',used:0});
+    label:label.slice(0,40),arc:info.arc||'',who:info.who||'',note:String(info.note||'').slice(0,60),used:0});
   if(p.choiceMemory.length>12) p.choiceMemory.length=12;
 }
 function p2BuildEcho(p,entry){
@@ -71450,9 +71630,14 @@ function p2BuildEcho(p,entry){
   let coach='主教练';
   try{ coach=clubCoachName(p,club)||'主教练'; }catch(e){/*静默:界面*/}
   const who=entry.who||'队友';
+  // R280：回响也要落在当前面板上——把玩家此刻的赛季数据接在这句话后面，
+  // 让「几周前的选择」和「现在的表现」出现在同一段文字里，可追溯、可对照。
+  const sea=textFactSeason(p), form=Number(p.currentForm)||0;
+  const dataTail=sea.apps?`（目前${sea.apps}场${sea.goals}球${sea.assists}助，近期评分${form?form.toFixed(1):'—'}）`:'';
   const text=String(t.text).replace(/\{club\}/g,club).replace(/\{coach\}/g,coach)
-    .replace(/\{who\}/g,who).replace(/\{arc\}/g,entry.arc||'那段剧情').replace(/\{label\}/g,entry.label||'');
-  return {title:t.title,text,art:t.art||'press',entry};
+    .replace(/\{who\}/g,who).replace(/\{arc\}/g,entry.arc||'那段剧情').replace(/\{label\}/g,entry.label||'')
+    .replace(/\{note\}/g,entry.note||'');
+  return {title:t.title,text:text+dataTail,art:t.art||'press',entry};
 }
 function p2ChoiceEchoWeekly(p){
   if(!p||p.retired) return false;
@@ -73577,6 +73762,9 @@ function p2PressFinish(){
     const md=p2MediaEnsure(Game.player);
     md.conf.unshift({day:dateStr(),year:(Game.date&&Game.date.year)||0,kind:'pre',match:(st.match&&st.match.opponent)||st.opponent||'',answers:st.answers});
     if(md.conf.length>8) md.conf.length=8;
+    // R280：发布会上的原话进入选择记忆，几周后由回响场景重新提起
+    const last=st.answers[st.answers.length-1];
+    if(last&&last.label&&typeof p2RememberChoice==='function') p2RememberChoice(Game.player,{kind:'press',label:last.label,arc:'赛前发布会',who:name});
   }
   Game.p2Press=null;
   preMatch();
@@ -73783,6 +73971,9 @@ function p2MediaPostFinish(){
   if(st&&st.answers.length){
     md.conf.unshift({day:dateStr(),year:(Game.date&&Game.date.year)||0,kind:'post',match:st.opponent||'',rating:st.rating,answers:st.answers});
     if(md.conf.length>8) md.conf.length=8;
+    // R280：赛后发布会的原话同样进入选择记忆，之后会被舆论翻出来
+    const last=st.answers[st.answers.length-1];
+    if(last&&last.label&&typeof p2RememberChoice==='function') p2RememberChoice(p,{kind:'press',label:last.label,arc:'赛后发布会',who:'跟队记者',note:'评分 '+((st.rating!==undefined&&st.rating!==null)?st.rating:'—')});
     Game.log.unshift(`[${dateStr()}] 🎤 赛后发布会结束，${st.answers.length}个回答被记录下来。`);
   }
   Game.p2MediaPost=null;
@@ -76440,12 +76631,18 @@ function p2ArcFill(text,p,arcId){
   const id=arcId||(Game.p2ArcScene&&Game.p2ArcScene.id);
   const star=(id&&STAR_ARC_STAR[id])||'他';
   const starClub=(id&&STAR_ARC_STAR[id]&&starClubNow(STAR_ARC_STAR[id]))||'他的球队';
+  // R280：弧线文案也能取到排名/近况/伤停，和剧情卡顶部的面板保持同一来源
+  const arcRank=textFactRank(p), arcForm=Number(p&&p.currentForm)||0;
+  const arcInj=(p&&p.injury&&String(p.injury.name||p.injury.type||'伤停'))||'健康';
   return String(text||'').replace(/\{rival\}/g,rival).replace(/\{club\}/g,club).replace(/\{nation\}/g,nation)
     .replace(/\{coach\}/g,coach).replace(/\{league\}/g,league)
     .replace(/\{age\}/g,String((p&&p.age)||'')).replace(/\{apps\}/g,String(season.appearances||0))
     .replace(/\{goals\}/g,String(season.goals||0)).replace(/\{assists\}/g,String(season.assists||0))
     .replace(/\{fan\}/g,String(Math.round((p&&p.fanApproval)||0)))
     .replace(/\{year\}/g,String((Game.date&&Game.date.year)||''))
+    .replace(/\{rank\}/g,arcRank?'第'+arcRank:'—')
+    .replace(/\{rating\}/g,arcForm?arcForm.toFixed(1):'—')
+    .replace(/\{injury\}/g,arcInj)
     .replace(/\{star\}/g,star).replace(/\{starclub\}/g,starClub);
 }
 // 选项文案也可能是函数：同队与对手两种语境分别给标签与反馈
@@ -85814,43 +86011,43 @@ const VOX_HEAD={
       '头条 · 他把球队扛在肩上'
     ],
     head:[
-      '{name}两球定江山，{club}主场拿下{opp}',
-      '{name}四次过人撕开{opp}右路，评分{r}全场最高',
-      '{name}补时绝杀，{club}看台唱到失声',
-      '从替补席到头条，{name}用二十分钟改写比赛',
-      '{name}追平{record}，{club}球迷把围巾举过了头顶',
-      '一传一射加门线解围，{name}这一夜配得上任何赞美'
+      '{name}{contrib}，{club}{scoreline}{result}{opp}',
+      '{name}评分{r}，{club}{ha}{scoreline}{result}{opp}',
+      '{club}{ha}{scoreline}拿下{opp}，{name}{contrib}',
+      '赛后评分{r}：{name}这场做了什么',
+      '{name}本场{contrib}，{club}{scoreline}{result}{opp}',
+      '{opp}赛后承认：今晚没按住{name}'
     ],
     deck:[
-      '一个进球、一次助攻、一次门线解围，他把能做的都做了',
-      '对手赛前说盯死他，赛后主帅先鼓了掌',
-      '更衣室里队长只说了一句：今天他救了我们',
-      '数据不会撒谎：全场跑动第一，关键传球第一'
+      '本场评分{r}：射门{shots}次、射正{onTarget}次、关键传球{keyPasses}次',
+      '出场{minutes}分钟，传球{passesOk}/{passes}，对抗{duelsOk}/{duels}',
+      '{name}本场{contrib}，赛季累计{apps}场{goals}球{assists}助',
+      '对手赛前说盯死他，赛后主帅先鼓了掌'
     ],
     lede:[
-      '本报讯——当{name}把球送进{opp}的球门时，{city}的夜空被看台的火光点亮了一次。',
+      '本报讯——{club}{ha}{scoreline}{result}{opp}，{name}出场{minutes}分钟，评分{r}。',
       '这不是{club}本赛季最漂亮的一场球，却是最像样的一场，因为有人愿意把比赛扛在自己肩上。',
       '{name}赛后只说了一句话："球是队友给我的，我只是没有浪费。"',
       '主教练在发布会上罕见地提前结束了提问，理由是"该说的都在场上说了"。'
     ],
     body:[
       [
-        '上半场中段，{name}在左肋接球，一个假动作晃开{opp}的边后卫，再用外脚背把球推到远角，整套动作没有一丝犹豫。',
-        '{club}的前二十分钟并不顺，中场被压得抬不起头，直到{name}回撤到中圈要球，节奏才重新回到主队脚下。',
+        '本场{name}出场{minutes}分钟，射门{shots}次（射正{onTarget}次），关键传球{keyPasses}次。',
+        '传球成功{passesOk}/{passes}，对抗{duelsOk}/{duels}，过人{dribblesOk}/{dribbles}。',
         '看台上有人从开场就唱他的名字，到下半场，整片北看台都跟上了。',
-        '{opp}的右后卫在上半场就被换下，赛后数据显示他被{name}过掉四次。'
+        '{name}本场评分{r}，这是赛后技术统计给出的数字。'
       ],
       [
-        '易边之后{opp}换成三中卫，把右路彻底封死，{name}干脆把活动范围挪到中路，第二次撕开防线就是从那里开始的。',
-        '主教练换上{mate}，第一次触球就找到了{name}的跑位，这次换人赛后被称为本场的分水岭。',
+        '易边之后{opp}调整了防守站位，{name}的活动范围随之挪到中路。',
+        '主教练换上{mate}，第一次触球就找到了{name}的跑位，这次换人被赛后称为本场的分水岭。',
         '{mate}赛后说："他今天跑的那些线路，我们在训练里练了整整一周。"',
         '{opp}主帅承认："我们准备了针对他的方案，但他今天的状态不是方案能解决的。"'
       ],
       [
-        '补时阶段，{name}在自家禁区前沿完成一次铲断，起身后把球一路带到对方角旗区，用这种方式把最后的时间耗完。',
-        '终场哨响时，他没有庆祝，只是走向看台，把手套扔给了第一排的孩子。',
-        '俱乐部随后在社媒发出一张他跪地滑行的照片，配文只有两个字：谢谢。',
-        '这场胜利之后，{club}在积分榜上回到前列，距离{honour}只差一步。'
+        '终场哨响时，{name}没有多做庆祝，只是走向看台，向第一排的球迷致意。',
+        '这场{result}之后，{club}暂列联赛第{rank}，赛季至今{apps}场{goals}球{assists}助。',
+        '俱乐部随后在社媒发出赛后海报，配文只有两个字：谢谢。',
+        '{name}目前状态：{injury}。'
       ]
     ],
     pull:[
@@ -85860,11 +86057,11 @@ const VOX_HEAD={
     ],
     side:[
       '本报评论：一支球队可以靠体系赢球，但有些夜晚，只能靠一个人。',
-      '数据：{name}触球六十七次，射门五次，射正三次，关键传球四次，评分{r}。',
+      '本报评论：数据之外，{name}把该补的位置都补了。',
       '旧闻重提：三年前{name}还在预备队，那场比赛的看台上只有十一个人。'
     ],
     cartoon:[
-      '漫画：{name}披着斗篷站在球门线上，身后是排队投降的{opp}后卫。',
+      '漫画：{name}站在记分牌前，牌子上的比分是{scoreline}。',
       '漫画：看台上一位老人举着"我看了四十年，今晚值了"的纸牌。',
       '漫画：{opp}主帅的战术板上，所有箭头最后都指向同一个人。'
     ]
@@ -87066,9 +87263,108 @@ function voxMatePos(p,low){
   const sorted=mates.slice().sort((a,b)=>(low?(a.trust||50)-(b.trust||50):(b.trust||50)-(a.trust||50)));
   return (POSITIONS[sorted[0].pos]&&POSITIONS[sorted[0].pos].name)||'队友';
 }
+// ===================== R280 · 文字事实层 =====================
+// 目标：头版 / 引语 / 剧情卡 / 回响 里出现的比分、对手、进球、助攻、评分、伤停、
+// 排名、个人数据，全部从本层取数；文字不再自带一套和面板无关的数字。
+// 旧存档：只读现有字段，缺字段按 0/空处理，不写回，不迁移。
+function textFactSeason(p){
+  const s=(p&&p.stats&&(p.stats.season||p.stats.club))||{};
+  return {apps:Number(s.appearances)||0,goals:Number(s.goals)||0,assists:Number(s.assists)||0,motm:Number(s.motm)||0};
+}
+function textFactRank(p){
+  try{
+    if(typeof Game!=='undefined'&&Game.season&&!Game.season.finished&&typeof seasonRankList==='function'){
+      const i=seasonRankList().indexOf(Game.season.playerClub)+1;
+      if(i>0) return i;
+    }
+  }catch(e){ /* 静默:赛季未开始 */ }
+  return 0;
+}
+function textFactMatch(m){
+  if(!m||!m.score) return null;
+  const mine=m.isHome?m.score.home:m.score.away, theirs=m.isHome?m.score.away:m.score.home;
+  const st=m.stats||{};
+  return {ha:m.isHome?'主场':'客场',mine,theirs,opp:String(m.opponent||'对手'),
+    scoreLine:mine+'-'+theirs,won:mine>theirs,drew:mine===theirs,
+    g:Number(m.playerGoals)||0,a:Number(m.playerAssists)||0,
+    minutes:(m.playerMinutes===undefined?90:Number(m.playerMinutes)||0),
+    shots:Number(st.shots)||0,onTarget:Number(st.onTarget)||0,keyPasses:Number(st.keyPasses)||0,
+    passes:Number(st.passes)||0,passesOk:Number(st.passesOk)||0,
+    dribbles:Number(st.dribbles)||0,dribblesOk:Number(st.dribblesOk)||0,
+    tackles:Number(st.tackles)||0,tacklesOk:Number(st.tacklesOk)||0,
+    saves:Number(st.saves)||0,interceptions:Number(st.interceptions)||0,
+    clearances:Number(st.clearances)||0,blocks:Number(st.blocks)||0,
+    duels:Number(st.duels)||0,duelsOk:Number(st.duelsOk)||0,oppGoals:theirs,
+    late:Number(m.minute)>=85&&mine>theirs,subOn:!!m.subOn,redCards:Number(m.redCards)||0};
+}
+function textFactPack(p,m,extra){
+  const sea=textFactSeason(p), mf=textFactMatch(m);
+  return {p,sea,mf,rank:textFactRank(p),extra:extra||{},played:!!(extra&&extra.played),
+    rating:Number(extra&&extra.rating)||0,
+    injury:(p&&p.injury)?String(p.injury.name||p.injury.type||'伤停'):'',
+    injuryDays:(p&&p.injury)?Math.max(0,Math.ceil(Number(p.injury.daysLeft)||0)):0,
+    form:Number(p&&p.currentForm)||0,age:Number(p&&p.age)||0,
+    club:(p&&p.stats&&p.stats.club&&p.stats.club.name)||'球队',
+    value:Math.round((typeof estimateMarketValue==='function'&&p)?estimateMarketValue(p):(Number(p&&p.value)||0))};
+}
+function r280CnNum(s){
+  const map={一:1,二:2,两:2,三:3,四:4,五:5,六:6,七:7,八:8,九:9,十:10};
+  if(/^\d+$/.test(s)) return Number(s);
+  let n=0;
+  if(s.indexOf('十')>=0){ const a=s.split('十'); n=(a[0]?map[a[0]]||0:1)*10+(a[1]?map[a[1]]||0:0); return n; }
+  for(const ch of s) n=n*10+(map[ch]||0);
+  return n;
+}
+// 只在「本场事实」存在时做校验：没有比赛事件（重大事件/退役稿）不走这套规则。
+// 参数是模板原文（尚未填入 {shots} 等真实 token），因此 token 句不会被误杀。
+function textClaimIssues(raw,facts,opts){
+  const s=String(raw||''), out=[];
+  const mf=facts&&facts.mf;
+  const need=(re,ok,why)=>{ if(re.test(s)&&!ok) out.push(why); };
+  // 纪录/荣誉引用必须真的有对应字段，否则会出现「追平{record}」这种半截话
+  need(/\{record\}/,!!(facts&&facts.record),'引用不存在的纪录');
+  need(/\{honour\}/,!!(facts&&facts.honour),'引用不存在的荣誉');
+  need(/\{rank\}/,!!(facts&&facts.rank),'引用不存在的排名');
+  if(!mf) return out;
+  const g=mf.g,a=mf.a;
+  // R281：头版/导语是球队视角，不能在本场未胜时写「取胜/拿下」；引语池保持多视角，不走这条。
+  if(opts&&opts.team) need(/取胜|赢下|拿下|赢了|全取三分|三分到手/,!!mf.won,'头版声称取胜（本场未胜）');
+  need(/梅开二度|独中两元|两球/,g>=2,'声称进两球');
+  need(/帽子戏法|独中三元|三球/,g>=3,'声称进三球');
+  need(/绝杀|读秒|压哨/,mf.late&&g>=1&&Math.abs(mf.mine-mf.theirs)<=1,'声称绝杀');
+  need(/进球(?!荒)|破门|扳平比分|反超比分|锁定胜局/,g>=1,'声称进球');
+  need(/一传一射|传射建功/,g>=1&&a>=1,'声称传射');
+  need(/送出助攻|助攻了|一次助攻|1次助攻/,a>=1,'声称助攻');
+  need(/零封|一球未失/,mf.oppGoals===0,'声称零封');
+  need(/扑救|神扑/,mf.saves>=1,'声称扑救');
+  need(/门线解围/,mf.clearances>=1,'声称门线解围');
+  need(/比赛用球/,g>=3,'声称带走比赛用球');
+  need(/全场最佳|评分全场最高|本轮最佳|全场最佳球员/,facts.rating>=8.5,'声称全场最佳');
+  need(/英雄之夜/,facts.rating>=8.5,'声称英雄之夜');
+  need(/积分榜上超过|排名继续上升|反超登顶/,false,'声称积分榜变化（无排名快照）');
+  need(/[0-9一二三四五六七八九十百两]+(秒|厘米)/,false,'具体秒数/厘米（无对应数据）');
+  need(/[二三四五六七八九十百两]+次/,false,'具体次数（无对应数据）');
+  need(/[二三四五六七八九十百两]+脚/,false,'具体脚数（无对应数据）');
+  need(/[二三四五六七八九十百两]+米/,false,'具体米数（无对应数据）');
+  need(/[0-9一二三四五六七八九十百两]+个球/,false,'具体进球数（无对应数据）');
+  need(/新援|引援/,false,'声称有新援（无转会记录支撑）');
+  need(/没有浪费/,g>=1,'暗示进球（未进球）');
+  need(/跑动第一|跑动距离第一|关键传球第一/,false,'声称跑动/关键传球第一');
+  need(/触球[0-9一二三四五六七八九十百两]+次/,false,'声称触球次数（无对应数据）');
+  need(/射门[0-9一二三四五六七八九十百两]+次/,false,'声称射门次数（应走 token）');
+  need(/射正[0-9一二三四五六七八九十百两]+次/,false,'声称射正次数（应走 token）');
+  need(/关键传球[0-9一二三四五六七八九十百两]+次/,false,'声称关键传球次数（应走 token）');
+  need(/过掉[0-9一二三四五六七八九十百两]+次/,false,'声称过人次数（应走 token）');
+  if(facts.played&&!mf.subOn) need(/从替补席|替补登场|替补出场/,false,'声称替补（本场首发）');
+  if(/球员替换|被换下/.test(s)&&mf.minutes>=90) out.push('声称被换下（打满全场）');
+  return out;
+}
+function textClaimOK(raw,facts,opts){ return textClaimIssues(raw,facts,opts).length===0; }
 function voxFill(s,p,ctx){
   const op=opinionEnsure(p);
   const topic=(op.topics&&op.topics[0]&&op.topics[0].label)||'最近的表现';
+  const f=(ctx&&ctx.facts)||textFactPack(p,(ctx&&ctx.match)||null,{played:!!(ctx&&ctx.played),rating:ctx&&ctx.rating});
+  const mf=f.mf, sea=f.sea;
   const map={
     name:(p&&p.name)||'他',club:voxClubName(p),opp:(ctx&&ctx.opp)||'对手',
     mate:(ctx&&ctx.mate)||voxMateName(p),pos:(POSITIONS[p.position]&&POSITIONS[p.position].name)||'球员',
@@ -87076,7 +87372,19 @@ function voxFill(s,p,ctx){
     nick:(op.nick&&op.nick.name)||((p&&p.name)||'他'),topic:topic,
     g:(ctx&&ctx.g)||0,a:(ctx&&ctx.a)||0,r:(ctx&&ctx.r)||((ctx&&ctx.rating)||'6.0'),
     year:(Game.date&&Game.date.year)||'',honour:(ctx&&ctx.honour)||'',record:(ctx&&ctx.record)||'',
-    pullQuote:(ctx&&ctx.pullQuote)||topic
+    pullQuote:(ctx&&ctx.pullQuote)||topic,
+    // R280：真实数据 token（没有比赛时给「—」而不是编造）
+    scoreline:mf?mf.scoreLine:'—',result:mf?(mf.won?'取胜':mf.drew?'战平':'失利'):'—',
+    ha:mf?mf.ha:'',
+    contrib:mf?((mf.g?mf.g+'球':'')+(mf.a?mf.a+'助':''))||('出场'+mf.minutes+'分钟'):'',
+    shots:mf?mf.shots:0,onTarget:mf?mf.onTarget:0,keyPasses:mf?mf.keyPasses:0,
+    passes:mf?mf.passes:0,passesOk:mf?mf.passesOk:0,dribbles:mf?mf.dribbles:0,dribblesOk:mf?mf.dribblesOk:0,
+    tackles:mf?mf.tackles:0,tacklesOk:mf?mf.tacklesOk:0,saves:mf?mf.saves:0,
+    interceptions:mf?mf.interceptions:0,clearances:mf?mf.clearances:0,blocks:mf?mf.blocks:0,
+    duels:mf?mf.duels:0,duelsOk:mf?mf.duelsOk:0,minutes:mf?mf.minutes:0,
+    apps:sea.apps,goals:sea.goals,assists:sea.assists,motm:sea.motm,
+    rank:f.rank||'—',age:f.age||'—',form:f.form?f.form.toFixed(1):'—',
+    injury:f.injury?f.injury:'健康',injuryDays:f.injuryDays||0
   };
   return String(s).replace(/\{(\w+)\}/g,(m,k)=>map[k]!==undefined?map[k]:m);
 }
@@ -87167,6 +87475,9 @@ function voxCompose(p,actorId,stance,ctx){
   const win=ctx.tags.has('m_win')||ctx.tags.has('m_bigwin');
   s=s.replace(/\{core\}/g,()=>voxFrag(p,frame.core||('eval_'+stance+'_'+(win?'win':'gen')),ctx));
   s=s.replace(/\{detail\}/g,()=>voxFrag(p,frame.detail||'detail_gen',ctx));
+  // R280：事实校验在填 token 之前做——模板里写死的「绝杀/两球/扑救」等必须与当场数据对得上；
+  // 对不上就让这条引语退回，宁可少一句，也不生成和数据打架的话。
+  if(!textClaimOK(s,ctx.facts,{team:true})) return '';
   return voxFill(s,p,ctx);
 }
 function voxRatingVal(v){
@@ -87217,10 +87528,14 @@ function voxContext(p,src){
   if(p.stats&&p.stats.national&&p.stats.national.caps===1) t.add('c_natfirst');
   const op=p.opinion;
   if(op&&op.topics) op.topics.forEach(x=>{ if(x.heat>=35) t.add('t_'+x.key); });
-  return {tags:t,g:src&&src.match?(src.match.playerGoals||0):0,a:src&&src.match?(src.match.playerAssists||0):0,
+  // R280：同一份 ctx 既给标签，也给真实数字；文字层只从这里取数。
+  const facts=textFactPack(p,m,{played:!!(src&&src.played),rating:src&&src.rating});
+  const mf=facts.mf;
+  return {tags:t,g:mf?mf.g:0,a:mf?mf.a:0,
     r:voxRatingVal(src&&src.rating).toFixed(1),played:!!(src&&src.played),
     score:(src&&src.score!==undefined)?src.score:((typeof voiceScore==='function')?voiceScore(m,src&&src.rating,!!(src&&src.played)):0),
-    match:m,rating:src&&src.rating,opp:src&&src.opp||(m&&m.opponent)||'对手'};
+    match:m,rating:src&&src.rating,opp:src&&src.opp||(m&&m.opponent)||'对手',
+    facts:facts,sea:facts.sea,rank:facts.rank,form:facts.form,injury:facts.injury,injuryDays:facts.injuryDays};
 }
 function voxStanceFor(p,actorId,ctx){
   const bias=voxActorBias(p,actorId,ctx);
@@ -87289,8 +87604,10 @@ function voxSelectQuotes(p,ctx,opts){
   }
   const sp=voxSpecialFor(p,ctx);
   if(sp){
-    const pool=(VOX_SPECIALS2&&VOX_SPECIALS2[sp.pool])||[];
-    const text=voxPickLine(p,'special:'+sp.pool,pool.map((t,i)=>({id:'sp_'+sp.pool+'_'+i,t:voxFill(t,p,ctx)})));
+    const raw=(VOX_SPECIALS2&&VOX_SPECIALS2[sp.pool])||[];
+    // R280：特别引语同样要过事实校验，避免 0 球比赛出现「头球破门」这种特写
+    const pool=raw.filter(t=>textClaimOK(t,ctx.facts,{team:true}));
+    const text=pool.length?voxPickLine(p,'special:'+sp.pool,pool.map((t,i)=>({id:'sp_'+sp.pool+'_'+i,t:voxFill(t,p,ctx)}))):'';
     if(text) picked.push({who:sp.who,meta:sp.meta,text:text,tone:sp.tone,channel:sp.channel,register:'sharp',
       agenda:'observe',frame:(opinionEnsure(p).frame||'unknown'),actorId:'special',heat:voxQuoteHeat(ctx,sp.channel,score,60)+12});
   }
@@ -87499,6 +87816,23 @@ function voxTryNick(p,ctx){
   if(!had) Game.log.unshift(`[${dateStr()}] 🏷️ 媒体开始叫你「${name}」。`);
   return op.nick;
 }
+// R280：纯事实头版。每个数字都能在 facts 里找到同名字段，措辞只描述事实本身。
+function voxFactPaper(p,ctx,key){
+  const f=(ctx&&ctx.facts)||{}, mf=f.mf, sea=f.sea||{apps:0,goals:0,assists:0};
+  const name=(p&&p.name)||'他', r=(ctx&&ctx.r)||'6.0';
+  const res=mf?(mf.won?'取胜':mf.drew?'战平':'失利'):'';
+  if(key==='kicker') return '头版 · 赛后';
+  if(key==='head') return mf?`${name}${mf.g?mf.g+'球':''}${mf.a?mf.a+'助':''}，${mf.ha}${mf.scoreLine}${res}${mf.opp}`:`${name}本赛季${sea.apps}场${sea.goals}球${sea.assists}助`;
+  if(key==='deck') return mf?`评分${r}，射门${mf.shots}次、射正${mf.onTarget}次、关键传球${mf.keyPasses}次`:`本赛季${sea.apps}场${sea.goals}球${sea.assists}助`;
+  if(key==='lede') return mf?`${name}本场出场${mf.minutes}分钟，评分${r}。`:`${name}本赛季至今${sea.apps}场${sea.goals}球${sea.assists}助。`;
+  if(key==='body0') return mf?`本场${name}射门${mf.shots}次（射正${mf.onTarget}次），关键传球${mf.keyPasses}次，传球成功${mf.passesOk}/${mf.passes}。`:'';
+  if(key==='body1') return mf?`对抗${mf.duelsOk}/${mf.duels}，过人${mf.dribblesOk}/${mf.dribbles}，抢断${mf.tacklesOk}/${mf.tackles}。`:'';
+  if(key==='body2') return `赛季至今${sea.apps}场${sea.goals}球${sea.assists}助，${f.rank?'联赛第'+f.rank:'联赛排名暂无'}，当前状态${f.injury?f.injury:'健康'}。`;
+  if(key==='pull') return mf?(mf.won?'“这场球先站稳了再说。”——主教练':'“结果不算好，问题要回去解决。”——主教练'):'“一步一步来。”——主教练';
+  if(key==='side') return mf?`数据：射门${mf.shots}次，射正${mf.onTarget}次，关键传球${mf.keyPasses}次，评分${r}。`:'本报评论：数据摆在这里。';
+  if(key==='cartoon') return `漫画：${name}站在记分牌前，上面写着${mf?mf.scoreLine:'—'}。`;
+  return '';
+}
 function voxFrontPage(p,entry){
   const op=opinionEnsure(p);
   const frame=op.frame||'unknown';
@@ -87508,7 +87842,16 @@ function voxFrontPage(p,entry){
   const ctx=Object.assign(voxContext(p,entry||{}),{topic:topic.label,nick:(op.nick&&op.nick.name)||((p&&p.name)||'他'),
     pullQuote:topic.label,honour:(entry&&entry.honour)||'',record:(entry&&entry.record)||''});
   ctx.score=entry&&entry.score||0;
-  const pick=(key,pool)=>voxFill(voxPickLine(p,'head:'+frame+':'+key,(pool||[]).map((t,i)=>({id:'h_'+voxHash(t)+'_'+i,t:t}))),p,ctx);
+  // R280：头版是所有文字里最容易「和面板打架」的一处。候选句先过事实校验；
+  // 若整池都与本场数据矛盾，就退回下面这组纯事实句，绝不把「两球」写给 0 球的比赛。
+  if(entry&&entry.match) ctx.facts=textFactPack(p,entry.match,{played:entry.played===undefined?true:!!entry.played,rating:entry.rating});
+  ctx.facts.record=(entry&&entry.record)||''; ctx.facts.honour=(entry&&entry.honour)||'';
+  const pick=(key,pool)=>{
+    const arr=pool||[];
+    const ok=arr.filter(t=>textClaimOK(t,ctx.facts,{team:true}));
+    if(ok.length) return voxFill(voxPickLine(p,'head:'+frame+':'+key,ok.map((t,i)=>({id:'h_'+voxHash(t)+'_'+i,t:t}))),p,ctx);
+    return voxFill(voxFactPaper(p,ctx,key),p,ctx);
+  };
   const body=(T.body||[[]]);
   // R212：头版导语必须带上本场事实（我方-对手 + 对手名），避免 40 篇报道 0 篇提到比分/对手
   const scLine=voiceScoreLine(entry&&entry.match);

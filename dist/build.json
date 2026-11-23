@@ -1,12 +1,12 @@
 {
-  "BUILD_ID": "2026.11.13.226",
+  "BUILD_ID": "2026.11.23.281",
   "source": "绿茵生涯.html",
-  "sourceBytes": 5074246,
-  "productBytes": 8612207,
+  "sourceBytes": 5100909,
+  "productBytes": 8638870,
   "inlines": [
     "绿茵生涯_球员数据库.js"
   ],
-  "sha256": "fd1218625575b9db732f47478a37a28a47cb81c43a224a9261a505eea6ce710a",
-  "builtAt": "2026-11-23T11:43:49.209Z",
-  "sourceMtime": "2026-11-23T11:43:02.552Z"
+  "sha256": "d1894599f4f3b9d02593058ed210dab8e3fd0101d5a008126b49f6e2c4017754",
+  "builtAt": "2026-11-23T13:15:05.453Z",
+  "sourceMtime": "2026-11-23T13:14:54.237Z"
 }
