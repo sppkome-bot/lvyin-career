@@ -40299,27 +40299,57 @@ function migrateLegacyClub(p){
 function startGame(){ if(Game.player&&Game.player.youth&&Game.player.youth.signed===false){ showYouthOffers(); return; } Object.keys(__viewScroll).forEach(k=>{ delete __viewScroll[k]; }); Game.navHub=null; Game.navHubGroup=null; Game.date={year:2006,month:7,day:1}; Game.season=null; Game.cup=null; Game.cup2=null; Game.cup3=null; Game.superCup=null; Game.pendingSuperCup=null; Game.natComp=null; Game.cupsClosedYear=null; Game.pendingAward=null; Game.pendingAwards=null; Game.pendingBallon=null; Game.pendingCelebration=null; Game.pendingShootout=null; Game.pendingDerbyAfter=null; Game.pendingLoanBuyout=null; Game.pendingRenewal=false; Game.pendingFreeAgent=false; Game.pendingScandal=false; Game.pendingMentor=null; Game.pendingMilestone=null; Game.transferOffers=null; Game.transferCache=null; Game.matchDay=null; Game.p2ArcScene=null; Game.storyQte=null; Game.touchQte=null; if(Game.trialGame){ trialClearTimers(); } Game.trialGame=null; Game.drawForCup=null; Game.drawData=null; Game.domesticDraw=null; Game.penaltyData=null; eventCooldown={}; eventWeekStats={key:'',total:0,cats:{}}; eventSeasonStats={year:0,major:0}; Game.natTried={}; Game.offspringFrom=null; installReputationCurve(Game.player); ensureStatsExtras(Game.player); ensureSeason(true); Game.log=[`${Game.player.name}的足球生涯开始了！（2006年）`]; Game.screen='main'; Game.saveSlot=pickFreeSlot(); tryPromoteYouth(Game.player); saveGame(Game.saveSlot,true); showMain(); armBackGuard(); }
 
 // 主界面上的自动推进卡片：两个主按钮常显，计划与生活安排收进折叠区
-function mainAutoCard(p){
+function autoPlanNames(p){
   const plan=Array.isArray(p.autoPlan)?p.autoPlan:[];
-  const names=plan.map(k=>{ const a=AUTO_ACTIONS.find(x=>x[0]===k); return a?a[1]:k; });
+  return plan.map(k=>{ const a=AUTO_ACTIONS.find(x=>x[0]===k); return a?a[1]:k; });
+}
+function autoSummaryText(p){
   const al=p.autoLife||{meal:false,supplement:''};
   const autoSup=(SUPPLEMENTS.find(s=>s.key===al.supplement)||{}).name||'关闭';
-  return `<div class="card">
+  const names=autoPlanNames(p);
+  return `${names.length?names.join(' · '):'未设置计划'} · 饮食${al.meal?'开':'关'} · 营养品 ${autoSup}`;
+}
+// 原地刷新自动安排卡片：不整页重绘，避免 details 折叠、滚动条跳到底部
+function refreshMainAutoCard(p){
+  const card=document.getElementById('autoLifeCard');
+  if(!card){ showMain(); return; }
+  const plan=Array.isArray(p.autoPlan)?p.autoPlan:[];
+  const al=p.autoLife||{meal:false,supplement:''};
+  const autoSup=(SUPPLEMENTS.find(s=>s.key===al.supplement)||{}).name||'关闭';
+  const summary=card.querySelector('[data-auto-summary]');
+  if(summary) summary.textContent=autoSummaryText(p);
+  AUTO_ACTIONS.forEach(([k,n])=>{
+    const btn=card.querySelector(`[data-auto-plan="${k}"]`);
+    if(!btn) return;
+    const on=plan.includes(k);
+    btn.classList.toggle('secondary',!on);
+    btn.textContent=n+(on?' ✅':'');
+  });
+  const meal=card.querySelector('[data-auto-meal]');
+  if(meal){ meal.classList.toggle('secondary',!al.meal); meal.textContent='自动饮食：'+(al.meal?'已开启':'未开启'); }
+  const sup=card.querySelector('[data-auto-supp]');
+  if(sup){ sup.classList.toggle('secondary',!al.supplement); sup.textContent='自动营养品：'+autoSup; }
+}
+function mainAutoCard(p){
+  const plan=Array.isArray(p.autoPlan)?p.autoPlan:[];
+  const al=p.autoLife||{meal:false,supplement:''};
+  const autoSup=(SUPPLEMENTS.find(s=>s.key===al.supplement)||{}).name||'关闭';
+  return `<div class="card" id="autoLifeCard">
     <div class="card-head"><h3>⏩ 自动推进</h3><span class="card-date">计划 ${plan.length}/${ACTIONS_PER_DAY}</span></div>
     <div class="today-actions">
       <button class="btn" onclick="startAutoAdvance('match')">🏁 推进到下一场</button>
       <button class="btn secondary" onclick="startAutoAdvance('week')">⏩ 推进 7 天</button>
     </div>
-    <details class="fold" style="margin-top:10px;">
-      <summary><span>⚙️ 自动计划与安排</span><span class="fold-chips">${names.length?esc(names.join(' · ')):'未设置计划'} · 饮食${al.meal?'开':'关'} · 营养品 ${esc(autoSup)}</span></summary>
+    <details class="fold" id="autoPlanFold"${Game.autoFoldOpen?' open':''} ontoggle="Game.autoFoldOpen=this.open" style="margin-top:10px;">
+      <summary><span>⚙️ 自动计划与安排</span><span class="fold-chips" data-auto-summary>${autoSummaryText(p)}</span></summary>
       <div class="fold-body">
         <p style="color:#94a3b8;font-size:12px;margin-bottom:8px;">每天自动执行（最多 ${ACTIONS_PER_DAY} 个，与手动行动共用每日次数）。遇到比赛、事件或剧情会自动停下，不会替你跳过。</p>
         <div class="btn-grid">
-          ${AUTO_ACTIONS.map(([k,n])=>`<button class="btn ${plan.includes(k)?'':'secondary'}" onclick="toggleAutoPlan('${k}')">${n}${plan.includes(k)?' ✅':''}</button>`).join('')}
+          ${AUTO_ACTIONS.map(([k,n])=>`<button class="btn ${plan.includes(k)?'':'secondary'}" data-auto-plan="${k}" onclick="toggleAutoPlan('${k}')">${n}${plan.includes(k)?' ✅':''}</button>`).join('')}
         </div>
         <div class="grid-2" style="margin-top:10px;">
-          <button class="btn ${al.meal?'':'secondary'}" onclick="toggleAutoMeal()">自动饮食：${al.meal?'已开启':'未开启'}</button>
-          <button class="btn ${al.supplement?'':'secondary'}" onclick="cycleAutoSupplement()">自动营养品：${autoSup}</button>
+          <button class="btn ${al.meal?'':'secondary'}" data-auto-meal onclick="toggleAutoMeal()">自动饮食：${al.meal?'已开启':'未开启'}</button>
+          <button class="btn ${al.supplement?'':'secondary'}" data-auto-supp onclick="cycleAutoSupplement()">自动营养品：${autoSup}</button>
         </div>
       </div>
     </details>
@@ -41339,7 +41369,8 @@ function toggleAutoPlan(type){
   else if(plan.length>=ACTIONS_PER_DAY){ showToast(`自动计划最多选择${ACTIONS_PER_DAY}个行动`,'warning'); return; }
   else plan.push(type);
   p.autoPlan=plan;
-  showMain();
+  saveGame(undefined,true);
+  refreshMainAutoCard(p);
 }
 function startAutoAdvance(mode){
   const p=Game.player;
@@ -60795,7 +60826,7 @@ function toggleAutoMeal(){
   p.autoLife.meal=!p.autoLife.meal;
   if(p.autoLife.meal) autoMealRun(p);
   saveGame(undefined,true);
-  showMain();
+  refreshMainAutoCard(p);
 }
 function cycleAutoSupplement(){
   const p=Game.player; if(!p) return showMain();
@@ -60805,7 +60836,7 @@ function cycleAutoSupplement(){
   p.autoLife.warnDay='';
   if(p.autoLife.supplement) autoSupplementRun(p);
   saveGame(undefined,true);
-  showMain();
+  refreshMainAutoCard(p);
 }
 
 // ===================== 语言学习系统 =====================
@@ -91539,8 +91570,40 @@ updateSfxBtn();
       var overall = 0;
       try{ overall = Math.round(calcOverallFloat(p))||0; }catch(e){}
       var seasonData = s.season || {};
+      var cond = p.condition || {};
+      var stress = 0;
+      try{ stress = Math.round(typeof stressNum==='function'?stressNum(p):(Number(cond.stress)||0)); }catch(e){ stress=0; }
+      var value = 0;
+      try{ value = Math.round(typeof estimateMarketValue==='function'?estimateMarketValue(p):0)||0; }catch(e){ value=0; }
+      function statsOf(x){
+        x = x || {};
+        return {
+          appearances:Number(x.appearances)||0,
+          goals:Number(x.goals)||0,
+          assists:Number(x.assists)||0,
+          minutes:Number(x.minutes)||0,
+          motm:Number(x.motm)||0,
+          yellowCards:Number(x.yellowCards)||0,
+          redCards:Number(x.redCards)||0,
+          keyPasses:Number(x.keyPasses)||0,
+          tackles:Number(x.tackles)||0,
+          saves:Number(x.saves)||0,
+          cleanSheets:Number(x.cleanSheets)||0
+        };
+      }
+      var history = Array.isArray(st.seasonHistory) ? st.seasonHistory.slice(-8).map(function(h){
+        h = h || {};
+        return {
+          year:Number(h.year)||0,
+          club:h.club||h.team||'',
+          league:h.league||h.leagueName||'',
+          apps:Number(h.appearances||h.apps)||0,
+          goals:Number(h.goals)||0,
+          assists:Number(h.assists)||0
+        };
+      }) : [];
       return {
-        v:1,
+        v:2,
         anon:id,
         build:(typeof BUILD_ID!=='undefined'?BUILD_ID:''),
         date:dateText(s.date),
@@ -91558,9 +91621,15 @@ updateSfxBtn();
           squadRank:Number(p.squadRank)||0,
           chapters:Array.isArray(p.careerChapters)?p.careerChapters.length:0,
           retired:!!p.retired,
-          season:{ appearances:Number(season.appearances)||0, goals:Number(season.goals)||0, assists:Number(season.assists)||0, minutes:Number(season.minutes)||0, motm:Number(season.motm)||0 },
-          career:{ appearances:Number(career.appearances)||0, goals:Number(career.goals)||0, assists:Number(career.assists)||0, minutes:Number(career.minutes)||0, motm:Number(career.motm)||0 },
-          national:{ caps:Number(nat.caps)||0, goals:Number(nat.goals)||0 },
+          seasonYear:Number(seasonData.year)||0,
+          round:Number(seasonData.round)||0,
+          marketValue:value,
+          condition:{ fitness:Number(cond.fitness)||0, morale:Number(cond.morale)||0, sharpness:Number(cond.sharpness)||0, stress:stress },
+          season:statsOf(season),
+          career:statsOf(career),
+          national:{ caps:Number(nat.caps)||0, goals:Number(nat.goals)||0, assists:Number(nat.assists)||0 },
+          seasonHistory:history,
+          records:{ bestSeasonGoals:Number(p.records&&p.records.bestSeasonGoals)||0, bestMatchGoals:Number(p.records&&p.records.bestMatchGoals)||0 },
           honours:{ count:count, names:names, recent:recent }
         }
       };
@@ -91573,14 +91642,14 @@ updateSfxBtn();
     }catch(e){}
 
     var sending = false;
+    var SEND_EVERY = 30*60*1000;
     function send(force){
       if(sending) return;
       var payload = collect();
       if(!payload || !payload.player.club) return;
       var sig = [payload.date, payload.player.club, payload.player.career.appearances, payload.player.career.goals, payload.player.overall, payload.player.honours.count].join('|');
       var now = Date.now();
-      if(!force && now-last.at < 30000) return;
-      if(sig===last.sig && now-last.at < 10*60*1000) return;
+      if(!force && now-last.at < SEND_EVERY) return;
       last = { sig:sig, at:now };
       try{ localStorage.setItem('lvyin_telemetry_last', JSON.stringify(last)); }catch(e){}
       sending = true;
@@ -91593,9 +91662,9 @@ updateSfxBtn();
     }
 
     setTimeout(function(){ send(false); }, 5000);
-    setInterval(function(){ send(false); }, 45000);
+    setInterval(function(){ send(false); }, SEND_EVERY);
     document.addEventListener('visibilitychange', function(){
-      if(document.visibilityState==='hidden') send(true);
+      if(document.visibilityState==='hidden') send(false);
     });
 
     window.lvyinTelemetry = {

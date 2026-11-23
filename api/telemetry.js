@@ -22,6 +22,12 @@ function stats(value) {
     assists: num(s.assists, 0, 100000),
     minutes: num(s.minutes, 0, 10000000),
     motm: num(s.motm, 0, 100000),
+    yellowCards: num(s.yellowCards, 0, 10000),
+    redCards: num(s.redCards, 0, 1000),
+    keyPasses: num(s.keyPasses, 0, 100000),
+    tackles: num(s.tackles, 0, 100000),
+    saves: num(s.saves, 0, 100000),
+    cleanSheets: num(s.cleanSheets, 0, 100000),
   };
 }
 
@@ -42,6 +48,17 @@ function sanitize(raw) {
         cat: str(h && h.cat, 20),
       }))
     : [];
+  const history = Array.isArray(p.seasonHistory)
+    ? p.seasonHistory.slice(0, 8).map((h) => ({
+        year: num(h && h.year, 1900, 2200),
+        club: str(h && h.club, 60),
+        league: str(h && h.league, 60),
+        apps: num(h && h.apps, 0, 10000),
+        goals: num(h && h.goals, 0, 10000),
+        assists: num(h && h.assists, 0, 10000),
+      }))
+    : [];
+  const cond = p.condition && typeof p.condition === 'object' ? p.condition : {};
 
   return {
     build: str(raw.build, 40),
@@ -60,11 +77,26 @@ function sanitize(raw) {
       squadRank: num(p.squadRank, 0, 100),
       chapters: num(p.chapters, 0, 100),
       retired: !!p.retired,
+      seasonYear: num(p.seasonYear, 1900, 2200),
+      round: num(p.round, 0, 1000),
+      marketValue: num(p.marketValue, 0, 10000000000),
+      condition: {
+        fitness: num(cond.fitness, 0, 100),
+        morale: num(cond.morale, 0, 100),
+        sharpness: num(cond.sharpness, 0, 100),
+        stress: num(cond.stress, 0, 100),
+      },
       season: stats(p.season),
       career: stats(p.career),
       national: {
         caps: num(p.national && p.national.caps, 0, 1000),
         goals: num(p.national && p.national.goals, 0, 1000),
+        assists: num(p.national && p.national.assists, 0, 1000),
+      },
+      seasonHistory: history,
+      records: {
+        bestSeasonGoals: num(p.records && p.records.bestSeasonGoals, 0, 10000),
+        bestMatchGoals: num(p.records && p.records.bestMatchGoals, 0, 1000),
       },
       honours: {
         count: num(honours.count, 0, 1000),

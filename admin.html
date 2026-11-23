@@ -22,6 +22,7 @@
   .login{max-width:540px;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:22px}
   .login p{color:var(--muted);font-size:13px;line-height:1.7;margin:0 0 14px}
   input{width:100%;padding:12px 14px;border-radius:10px;border:1px solid #2a2550;background:#0b0a20;color:var(--text);font-size:14px;outline:none}
+  input[type=checkbox]{width:auto;padding:0;accent-color:#ff4d8d}
   input:focus{border-color:var(--pink)}
   button{margin-top:12px;padding:11px 18px;border:0;border-radius:10px;background:linear-gradient(90deg,#ff4d8d,#a855f7);color:#fff;font-size:14px;font-weight:700;cursor:pointer}
   button:disabled{opacity:.6;cursor:default}
@@ -84,13 +85,16 @@
     <div class="tablebox">
       <div class="toolbar">
         <div class="title">玩家快照 <span id="shown" class="muted"></span></div>
-        <input id="filter" placeholder="搜俱乐部 / 联赛 / 位置">
+        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+          <input id="filter" placeholder="搜俱乐部 / 联赛 / 位置">
+          <label class="muted" style="font-size:12px;white-space:nowrap"><input id="all" type="checkbox"> 显示全部快照</label>
+        </div>
       </div>
       <div class="tablewrap">
         <table>
           <thead><tr>
             <th>时间</th><th>玩家</th><th>年龄</th><th>位置</th><th>俱乐部</th><th>联赛</th>
-            <th>综合</th><th>赛季 场/球/助</th><th>生涯 场/球/助</th><th>国家队</th><th>荣誉</th><th>最近荣誉</th>
+            <th>综合</th><th>身价</th><th>赛季 场/球/助</th><th>生涯 场/球/助</th><th>赛季历史</th><th>国家队</th><th>荣誉</th><th>最近荣誉</th>
           </tr></thead>
           <tbody id="rows"></tbody>
         </table>
@@ -99,7 +103,7 @@
     </div>
     <div class="foot">
       数据来自玩家浏览器的本地存档摘要，只包含俱乐部、联赛、位置、能力、赛季/生涯数据、国家队与荣誉，不包含姓名。
-      玩家可在网址后加 <code>?notelemetry=1</code> 关闭上报。
+      默认每人只显示最新一条；勾选“显示全部快照”可看历史。玩家可在网址后加 <code>?notelemetry=1</code> 关闭上报。
     </div>
   </div>
 </div>
@@ -118,6 +122,12 @@
     if(isNaN(d.getTime())) return String(v);
     var p = function(n){ return n<10?'0'+n:''+n; };
     return (d.getMonth()+1)+'/'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes());
+  }
+
+  function esc(v){
+    return String(v == null ? '' : v).replace(/[&<>"']/g, function(c){
+      return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];
+    });
   }
 
   function chip(name, count){
@@ -168,6 +178,10 @@
       var recent = (h.recent || []).slice(-1)[0];
       var recentText = recent ? ((recent.year ? recent.year + ' ' : '') + (recent.name || '') + (recent.team ? ' · ' + recent.team : '')) : '';
       var pos = (p.position || '') + (p.role ? ' · ' + p.role : '');
+      var market = ((Number(p.marketValue) || 0) / 10000).toFixed(1);
+      var hist = (p.seasonHistory || []).slice(-3).map(function(x){
+        return [x.year || '', x.club || '', (x.apps||0) + '/' + (x.goals||0) + '/' + (x.assists||0)].filter(Boolean).join(' ');
+      }).join('<br>');
       var hay = [p.club, p.league, pos, p.nation, honourNames].join(' ').toLowerCase();
       if(filter && hay.indexOf(filter) < 0) return;
       shown++;
@@ -175,17 +189,19 @@
       var tr = document.createElement('tr');
       var cells = [
         fmtTime(row.receivedAt || row._uploadedAt),
-        '<span class="muted">' + (row.anon ? row.anon.slice(0,8) : '-') + '</span>',
-        (p.age || '-') + '岁',
-        '<span class="pos">' + (pos || '-') + '</span>',
-        '<span class="club">' + (p.club || '-') + '</span>',
-        p.league || '-',
-        '<b>' + (p.overall || 0) + '</b>',
-        (season.apps||0) + ' / ' + (season.goals||0) + ' / ' + (season.assists||0),
-        (career.apps||0) + ' / ' + (career.goals||0) + ' / ' + (career.assists||0),
-        (nat.caps||0) + '场 ' + (nat.goals||0) + '球',
-        '<span class="honour">' + (h.count||0) + '</span>',
-        recentText || '<span class="muted">-</span>'
+        '<span class="muted">' + esc(row.anon ? row.anon.slice(0,8) : '-') + '</span>',
+        esc((p.age || '-') + '岁'),
+        '<span class="pos">' + esc(pos || '-') + '</span>',
+        '<span class="club">' + esc(p.club || '-') + '</span>',
+        esc(p.league || '-'),
+        '<b>' + esc(p.overall || 0) + '</b>',
+        esc(market + '万'),
+        esc((season.apps||0) + ' / ' + (season.goals||0) + ' / ' + (season.assists||0)),
+        esc((career.apps||0) + ' / ' + (career.goals||0) + ' / ' + (career.assists||0)),
+        hist || '<span class="muted">-</span>',
+        esc((nat.caps||0) + '场 ' + (nat.goals||0) + '球'),
+        '<span class="honour">' + esc(h.count||0) + '</span>',
+        recentText ? esc(recentText) : '<span class="muted">-</span>'
       ];
       cells.forEach(function(html){
         var td = document.createElement('td');
@@ -204,7 +220,8 @@
     $('enter').disabled = true;
     $('err').style.display = 'none';
     try{
-      var r = await fetch('/api/admin?limit=200', { headers: { Authorization: 'Bearer ' + t }, cache: 'no-store' });
+      var all = $('all').checked ? '&all=1' : '';
+      var r = await fetch('/api/admin?limit=200' + all, { headers: { Authorization: 'Bearer ' + t }, cache: 'no-store' });
       if(r.status === 401){ throw new Error('密码不对'); }
       if(!r.ok){ throw new Error('读取失败（HTTP ' + r.status + '）'); }
       data = await r.json();
@@ -222,6 +239,7 @@
   $('enter').addEventListener('click', load);
   $('token').addEventListener('keydown', function(e){ if(e.key === 'Enter') load(); });
   $('filter').addEventListener('input', function(){ if(data) renderRows(data.rows || []); });
+  $('all').addEventListener('change', function(){ if(token || $('token').value.trim()) load(); });
   if(token){ $('token').value = token; load(); }
 })();
 </script>

@@ -9,6 +9,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const zlib = require('zlib');
 
 const ROOT = path.resolve(__dirname, '..');
 const SRC = path.join(ROOT, '绿茵生涯.html');
@@ -25,8 +26,53 @@ for (const it of INLINES) {
   src = src.split(it.tag).join('<script>\n' + code + '\n</script>');
 }
 
+// Round 75：构建时把英超 20 队徽章图集（webp → base64）与坐标/主色注入单文件
+// R148：图集从「源文件里一行 1.2MB base64」改为「构建期压缩后注入」。
+//   - 源文件只留空占位 { img:'' }，源码可读、git diff 干净、直接打开源文件也能跑；
+//   - 产物的图集文本 gzip + base64 后约 0.9MB，运行期同步解压一次（约 10ms），
+//     省下的是首屏下载体积与浏览器解析 CJK/Latin 大字符串的开销。
+let atlasStats = { raw: 0, packed: 0, gz: false };
+(function injectBadges() {
+  const dir = path.join(ROOT, 'assets', 'badges');
+  const atlasPath = path.join(dir, 'badges.json');
+  if (!fs.existsSync(atlasPath)) return;
+  const atlas = JSON.parse(fs.readFileSync(atlasPath, 'utf8'));
+  const teams = JSON.parse(fs.readFileSync(path.join(dir, 'teams.json'), 'utf8')).teams || [];
+  const map = {}, colors = {};
+  // Round 77：alias[id] → 母队 id，取坐标先查 alias 再查主表（青年队不再整批落兜底）
+  const resolve = id => {
+    const direct = atlas.badges && atlas.badges[id];
+    if (direct && !(atlas.fallback && atlas.fallback[id])) return direct;
+    const parent = atlas.alias && atlas.alias[id];
+    const up = parent && atlas.badges && atlas.badges[parent];
+    if (up && !(atlas.fallback && atlas.fallback[parent])) return up;
+    return null;
+  };
+  teams.forEach(t => {
+    const c = resolve(t.id);
+    // 全量图集里 fallback[id]=true 是占位格，不能算真徽章：留给 CSS 兜底色块
+    if (c) { map[t.nameZh] = c; if (t.primaryColor) colors[t.nameZh] = t.primaryColor; }
+  });
+  console.error('[badges] teams=' + teams.length + ' mapped=' + Object.keys(map).length + ' alias=' + Object.keys(atlas.alias || {}).length);
+  const img = 'data:image/webp;base64,' + fs.readFileSync(path.join(dir, atlas.image || 'badges.webp')).toString('base64');
+  const data = JSON.stringify({ cell: atlas.cell, cols: atlas.cols, rows: atlas.rows || 1, img, teams: map, colors });
+  // R148：只压「坐标表 + 主色表」（JSON/中文，压缩率高），base64 图片本身已是压缩数据，
+  // 再 gzip 只会因为 base64 的 6bit 熵而变成 1:1，白付一次解压开销（实测 893886 → 893704）。
+  const meta = JSON.stringify({ cell: atlas.cell, cols: atlas.cols, rows: atlas.rows || 1, teams: map, colors });
+  const gz = zlib.gzipSync(Buffer.from(meta, 'utf8'), { level: 9 });
+  const packed = gz.toString('base64');
+  const plainImg = img;
+  atlasStats = { raw: data.length, packed: plainImg.length + packed.length, metaRaw: meta.length, metaPacked: packed.length, gz: true };
+  const loader = '/*BADGE_ATLAS_START*/{cell:' + atlas.cell + ',cols:' + atlas.cols + ',rows:' + (atlas.rows || 1) +
+    ',img:"' + plainImg + '",teams:{},colors:{},__metaGz:"' + packed + '"}/*BADGE_ATLAS_END*/';
+  const re = /\/\*BADGE_ATLAS_START\*\/[\s\S]*?\/\*BADGE_ATLAS_END\*\//;
+  if (!re.test(src)) throw new Error('源文件缺少徽章图集占位');
+  src = src.replace(re, () => loader);
+  console.error('[badges] meta ' + meta.length + ' → ' + packed.length + ' bytes (gzip+base64)');
+})();
+
 // 安全检查：产物里不能再残留本地 <script src="*.js">，否则 dist 只有一个 html，会 404
-const leftover = src.match(/<script[^>]+src="(?!https?:)[^"]+\.js"[^>]*>/gi);
+const leftover = src.match(/<script[^>]+src="(?!https?:|\/_vercel\/)[^"]+\.js"[^>]*>/gi);
 if (leftover) throw new Error('存在未内联的本地脚本，产物会 404：' + leftover.join(' , '));
 
 const product = HEADER + '\n' + src;

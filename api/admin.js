@@ -76,16 +76,31 @@ export default async function handler(req, res) {
     })
   ).filter(Boolean);
 
+  const allAnons = new Set();
+  for (const blob of blobs) {
+    const name = (blob.pathname.split('/').pop() || '');
+    const anon = name.split('-')[0];
+    if (/^[a-f0-9]{16,40}$/.test(anon)) allAnons.add(anon);
+  }
+
+  let visibleRows = rows;
+  if (req.query.all !== '1') {
+    const seen = new Set();
+    visibleRows = rows.filter((row) => {
+      if (!row.anon || seen.has(row.anon)) return false;
+      seen.add(row.anon);
+      return true;
+    });
+  }
+
   const clubs = {};
   const leagues = {};
   const positions = {};
   const honours = {};
-  const anons = new Set();
   let honourTotal = 0;
 
-  for (const row of rows) {
+  for (const row of visibleRows) {
     const p = row.player || {};
-    if (row.anon) anons.add(row.anon);
     if (p.club) clubs[p.club] = (clubs[p.club] || 0) + 1;
     if (p.league) leagues[p.league] = (leagues[p.league] || 0) + 1;
     if (p.position || p.role) {
@@ -101,13 +116,13 @@ export default async function handler(req, res) {
 
   return res.status(200).json({
     totalSnapshots: blobs.length,
-    shown: rows.length,
-    uniquePlayers: anons.size,
+    shown: visibleRows.length,
+    uniquePlayers: allAnons.size,
     honourTotal,
     clubs: top(clubs),
     leagues: top(leagues),
     positions: top(positions),
     honours: top(honours),
-    rows,
+    rows: visibleRows,
   });
 }
