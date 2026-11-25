@@ -1280,7 +1280,7 @@ const randFloat = (min, max) => Math.random() * (max - min) + min;
 const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
 
 // ===================== 版本号（每次发版必改；sw.js 的 BUILD 必须与本值一致） =====================
-const BUILD_ID = '2026.11.23.281';
+const BUILD_ID = '2026.11.25.287';
 // 措施四：开发期横幅（仅 ?dev=1）
 if(typeof location!=='undefined' && /[?&]dev=1(?:&|$)/.test(location.search||'')){
   try{ console.log('%c[BUILD]','color:#0af',BUILD_ID); }catch(e){/*静默:日志*/}
@@ -1545,7 +1545,7 @@ const ASSERT_LEVEL = (function(){
   return 0;
 })();
 // 与 sw.js 的 BUILD 必须一致；tools/guard.js 会在发布前比对两者
-const SW_BUILD = '2026.11.11.194';
+const SW_BUILD = '2026.11.25.287';
 function assertInv(id, cond, detail){
   if(cond) return true;
   let rec;
@@ -1986,6 +1986,29 @@ function calcOverallFloat(p){
   return coreAvg*0.7+all*0.3;
 }
 
+// R284：对外综合能力统一 FM 口径 1–200。内部仍是 calcOverallFloat（1–20 连续），
+// 其 0–100 刻度为 calcOverallFloat*5。换算用分段锚点 + 段内线性插值，不是固定系数：
+// 低段压缩（青年球员不会因为平均 4 点就有 40 CA）、中段陡（轮换→主力）、高段收敛（190+ 才是世界级）。
+// 严格单调递增 ⇒ 同龄人排名、首发排序、身价曲线都不受影响。
+const OVR200_ANCHORS=[
+  [0,0],[5,10],[15,18],[25,32],[35,52],[45,78],[50,95],[55,112],
+  [60,128],[65,142],[70,154],[75,166],[80,176],[85,185],[90,192],[95,197],[100,200]
+];
+function ovr200From100(v){
+  const x=clamp(Number(v)||0,0,100);
+  for(let i=1;i<OVR200_ANCHORS.length;i++){
+    const x1=OVR200_ANCHORS[i][0], y1=OVR200_ANCHORS[i][1];
+    if(x<=x1){
+      const x0=OVR200_ANCHORS[i-1][0], y0=OVR200_ANCHORS[i-1][1];
+      const t=x1===x0?0:(x-x0)/(x1-x0);
+      return Math.round(y0+(y1-y0)*t);
+    }
+  }
+  return 200;
+}
+// 内部 1–20 综合值 → CA 1–200
+function ovr200Of(p){ return ovr200From100((Number(calcOverallFloat(p))||0)*5); }
+
 // ===================== 选项效果文案 =====================
 // 把选项里的数值后果翻译成中文，直接显示在按钮里；
 // ATTR_NAMES 覆盖的键会自动作为属性处理，其余走下表。
@@ -2231,6 +2254,8 @@ function talentDrive(player){
 }
 // R265：潜力对外表达。玩家能看到「档位 + 区间 + 教练/球探评语 + 成长余量」，
 // 但看不到 hidden.potential 的精确值：区间按 2 分取整并上下浮动，避免反推。
+// R284：这里的 min 与 raw/lo/hi 都是内部 0–100 刻度，判定阈值不改；
+// 对外展示时统一经 ovr200From100 映射到 CA 1–200（potentialRange200）。
 const POTENTIAL_BANDS=[
   {min:90,label:'世界级上限',stars:5,note:'教练组私下说：这个孩子的天花板在国家队，别拿常规标准要求他。'},
   {min:82,label:'顶级联赛主力上限',stars:4,note:'球探报告：有能力在欧洲主流联赛站稳首发，关键看能不能把细节练出来。'},
@@ -2245,6 +2270,8 @@ function potentialBandOf(player){
   const hi=Math.min(99,Math.round((raw+4)/2)*2);
   return {raw,min:band.min,label:band.label,stars:band.stars,note:band.note,lo,hi};
 }
+// R284：潜力区间的对外文案统一走这里，避免各页面各写一套 100 制
+function potentialRange200(b){ return ovr200From100(b.lo)+'–'+ovr200From100(b.hi); }
 function potentialHeadroomInfo(player){
   const h=potentialHeadroom(player);
   if(h>=0.8) return {key:'high',label:'余量充足',dots:'●●●●○',note:'离自己的上限还很远，现在练什么都有回报。'};
@@ -4400,7 +4427,7 @@ function playerOverall(pl,year){
 function ratingText(pl,year){
   const y=year||currentYear();
   const age=playerAge(pl,y), cur=playerOverall(pl,y), peak=playerPeak(pl);
-  return `${age}岁 · <span style="color:#38bdf8;">能力${cur}</span>`+(age<=23&&peak>cur?` · <span style="color:#a78bfa;">潜力${peak}</span>`:'');
+  return `${age}岁 · <span style="color:#38bdf8;">能力${ovr200From100(cur)}</span>`+(age<=23&&peak>cur?` · <span style="color:#a78bfa;">潜力${ovr200From100(peak)}</span>`:'');
 }
 function getNationalStrength(nation,year){
   if(__natStrVer!==__worldMoveVer){ __natStrCache={}; __natStrVer=__worldMoveVer; }
@@ -4893,7 +4920,7 @@ function showLoanIn(){
   p2LoanEnsure(p);
   if(!p.loanInOffers){ if(!p2LoanInOffers(p,true)){ showToast('没有可租借的球员','warning'); showMain(); return; } }
   const cards=(p.loanInOffers||[]).map((o,i)=>`<div class="card">
-    <h3>${esc(o.name)} · ${esc(o.pos)} · ${o.age}岁 · 能力 ${o.ca}</h3>
+    <h3>${esc(o.name)} · ${esc(o.pos)} · ${o.age}岁 · 能力 ${ovr200From100(o.ca)}</h3>
     <div class="stat-row"><span class="stat-label">母队</span><span class="stat-value">${esc(o.from)}（${esc(o.league)}）</span></div>
     <div class="stat-row"><span class="stat-label">租金 / 工资分担</span><span class="stat-value">¥${(o.fee/10000).toFixed(1)}万 · 承租方 ${Math.round(o.wageShare*100)}%</span></div>
     <div class="stat-row"><span class="stat-label">预计工资支出</span><span class="stat-value">¥${o.wagePaid.toLocaleString()}</span></div>
@@ -4915,7 +4942,7 @@ function acceptLoanIn(i){
   p.clubFinances.budget=Math.round(budget-o.cost);
   p.loanIns.push({...o,startYear:Game.date.year});
   p.loanInOffers=null;
-  Game.log.unshift(`[${dateStr()}] 🔁 球队租借引进${o.from}的${o.name}（${o.pos}，能力${o.ca}），租金¥${(o.fee/10000).toFixed(1)}万，工资分担${Math.round(o.wageShare*100)}%。`);
+  Game.log.unshift(`[${dateStr()}] 🔁 球队租借引进${o.from}的${o.name}（${o.pos}，能力${ovr200From100(o.ca)}），租金¥${(o.fee/10000).toFixed(1)}万，工资分担${Math.round(o.wageShare*100)}%。`);
   showToast(`租借引进${o.name}`,'success');
   saveGame(undefined,true);
   showMain();
@@ -6245,6 +6272,14 @@ function clearPendingScenes(){
 function resumePendingScene(){
   /* ===== VOX+NARRA P8: 先把存档里的 NARRA 场景恢复出来 ===== */
   if(typeof narrResume==='function'&&narrResume()) return true;
+  // R286：刷新时如果停在剧情页，直接接回同一拍；线已结束/条件失效则清掉记录回主界面
+  try{
+    const sid=sessionStorage.getItem('lv_story_scene');
+    if(sid){
+      if(p2StorySceneHtml(sid)){ p2ShowStoryScene(sid); return true; }
+      sessionStorage.removeItem('lv_story_scene');
+    }
+  }catch(e){/*静默:存储*/}
   if(Game.p2ArcScene){
     const arcId=Game.p2ArcScene.id;
     Game.p2ArcScene=null;
@@ -7057,7 +7092,7 @@ function s8(){
     <span class="stat-value" style="display:inline-flex;align-items:center;"><button class="btn attr-step" onclick="adj('${a}',-1)" aria-label="减少${ATTR_NAMES[a]}">−</button><span id="attrVal_${a}" style="display:inline-block;min-width:30px;text-align:center;font-size:15px;">${creation.data.attrs[a]}</span><button class="btn attr-step" onclick="adj('${a}',1)" aria-label="增加${ATTR_NAMES[a]}">+</button></span></div>`).join('');
   render(`${creationHead(8,`属性分配（剩余<span id="attrLeft">${creation.data.points}</span>点）`,'基础属性池决定起点，剩余点数决定起始强度。')}
     <div class="card"><p style="color:#94a3b8;font-size:12px;line-height:1.8;">★ 是当前位置的核心属性，优先加它们；每 +1 消耗 1 点，每项最多 +3。下面每项都写了它影响什么。<br>
-      属性是 <b>1–20 制</b>（不是百分制）：单项上限 20，综合能力也按 1–20 计算，理论满值 20。球队等级 85/70/55 的一线队门槛约为综合 15/12/9。<br>
+      属性是 <b>1–20 制</b>：单项上限 20；综合能力按 FM 口径显示为 <b>CA 1–200</b>（由位置核心与全属性加权算出 1–20 内部值后换算）。球队等级 85/70/55 的一线队门槛约为内部综合 15/12/9（CA 约 166/142/78）。<br>
       不想逐个分配也可以直接用下方「快速完成」或「跳过分配」，系统会用合理默认值开局，并在日志里说明。</p></div>
     <p style="color:#94a3b8;font-size:12px;">基础属性池：${creation.data.totalPool||'—'}点${position==='GK'?'':'（不含门将专属属性）'}</p>
     <div class="card">${rows}</div>
@@ -7348,7 +7383,7 @@ function showTrialScene(){
     ${artBanner('training')}
     ${npcDialogue('coach',`“${venue}的规矩很简单：练得好就留下，跟不上就回去。你打算怎么让我记住你？”`)}
     <div class="card"><h3>今天的试训</h3>
-      <p style="color:#94a3b8;font-size:13px;">位置：${POSITIONS[p.position].name} · 综合能力 ${calcOverall(p)} / 20</p>
+      <p style="color:#94a3b8;font-size:13px;">位置：${POSITIONS[p.position].name} · 综合能力 ${ovr200Of(p)} / 200</p>
       <p style="color:#94a3b8;font-size:12px;margin-top:4px;">三项小游戏连考：反应扑救、停点传球、抢点射门。表现越好，拿到的青训邀请越多。</p></div>
     ${[
       ['show','全力展示','三项测试都按更严的标准判定，但每个完美额外加分，回报与风险最高'],
@@ -7882,6 +7917,8 @@ function showMain(){
   const p=Game.player;
   Game.navHub=null; Game.navHubGroup=null;
   if(!p) return showMenu();
+  // R286：回到主界面就说明已经离开剧情页，清掉刷新恢复标记
+  try{ sessionStorage.removeItem('lv_story_scene'); }catch(e){/*静默:存储*/}
   // Round 12：新档首启引导；旧档没有 p.onboard 字段，直接跳过
   if(p.onboard&&!p.onboard.done&&Game.screen!=='onboard') return showOnboarding();
   p2Ensure(p);
@@ -7908,11 +7945,12 @@ function showMain(){
     return showSeasonSummary();
   }
   const pos=POSITIONS[p.position]; const ovr=calcOverall(p);
+  const ovr200=ovr200Of(p);
   const mv=estimateMarketValue(p);
   const heat=marketHeatInfo(p), mediaRel=mediaRelationInfo(p);
   const s=Game.season;
   const myRank=s?seasonRankList().indexOf(s.playerClub)+1:0;
-  const ovrDelta=p.weeklyReport&&p.weeklyReport.ovr?p.weeklyReport.ovr.to-p.weeklyReport.ovr.from:0;
+  const ovrDelta=p.weeklyReport&&p.weeklyReport.ovr?ovr200From100((Number(p.weeklyReport.ovr.to)||0)*5)-ovr200From100((Number(p.weeklyReport.ovr.from)||0)*5):0;
   // 4 格仪表盘：纯展示，不增加首屏可点击元素
   // R118：竞技状态与体能曾共用一个变量（condition.fitness），现拆分：
   // 竞技状态 = 近 5 场平均评分 currentForm（3.0–10.0，影响首发/登场）；体能仍在条件卡里。
@@ -7920,14 +7958,14 @@ function showMain(){
   const formVal=Math.round(formNow*10)/10;
   const stressNow=stressNum(p);
   const dashHtml=`<div class="stat-grid dash-grid">
-    <div class="stat-tile acc-mint" title="综合能力是 1–20 制（不是百分制）：位置核心属性均值占 70%、其余场上属性按权重占 30%，单项上限 20，所以综合理论上限也是 20"><span class="stat-eyebrow">综合能力</span><strong class="stat-num">${ovr}<small>/20</small></strong><span class="stat-sub">${pos.name} · ${p.role}${ovrDelta?' · '+signed(ovrDelta):''}</span></div>
+    <div class="stat-tile acc-mint" title="综合能力（CA）是 FM 口径的 1–200：位置核心属性均值占 70%、其余场上属性按权重占 30% 算出 1–20 内部值，再按分段表换算；单项属性仍是 1–20"><span class="stat-eyebrow">综合能力</span><strong class="stat-num">${ovr200}<small>/200</small></strong><span class="stat-sub">${pos.name} · ${p.role}${ovrDelta?' · '+signed(ovrDelta):''}</span></div>
     <div class="stat-tile acc-gold"><span class="stat-eyebrow">市场身价</span><strong class="stat-num">${(mv/10000).toFixed(1)}<small>万</small></strong><span class="stat-sub">${heat.label}</span></div>
     <div class="stat-tile acc-blue"><span class="stat-eyebrow">联赛排名</span><strong class="stat-num">${s?(s.finished?'—':`第${myRank}<small>名</small>`):'—'}</strong><span class="stat-sub">${s?`${esc(s.leagueName)} · 第${Math.min(s.round+1,s.rounds.length)}/${s.rounds.length}轮`:'暂无赛季'}</span></div>
     <div class="stat-tile acc-pink"><span class="stat-eyebrow">竞技状态（评分）</span><strong class="stat-num">${formVal}<small>/10</small></strong><span class="stat-sub">近5场平均 · ${formNow<5.5?'偏低，影响首发':'决定首发/登场'}</span></div>
   </div>`;
   const potBand=potentialBandOf(p);
   const badgeHtml=`<div class="today-chips" style="margin-bottom:10px;">
-    <span class="today-chip" style="color:#a78bfa;border-color:#a78bfa66;" title="球探评估区间 ${potBand.lo}–${potBand.hi}（100 制，区间估计；精确潜力不会公开）">🔍 天赋 · ${potBand.label}</span>
+    <span class="today-chip" style="color:#a78bfa;border-color:#a78bfa66;" title="球探评估 CA 区间 ${potentialRange200(potBand)}（1–200，区间估计；精确潜力不会公开）">🔍 天赋 · ${potBand.label}</span>
     <span class="today-chip" style="color:${heat.color};border-color:${heat.color}66;" title="球探与转会市场兴趣指数 ${heat.score}">🔥 市场热度 · ${heat.label}</span>
     <span class="today-chip" style="color:${mediaRel.color};border-color:${mediaRel.color}66;" title="媒体关系 ${mediaRel.value} · 影响代言邀约与报价、续约报价、首发判定">📺 媒体关系 · ${mediaRel.label}</span>
   </div>`;
@@ -8016,7 +8054,7 @@ function showMain(){
     {label:'🎯 目标与下一章',card:(()=>{const nc=p2NextChapterCard(p),go=p2GoalOverviewCard(p); return nc+go;})()},
     {label:'🎭 剧情线',card:p2StoryCardHtml(p)}
   ];
-  const urgent=(typeof p2FirstWeekCard==='function'?p2FirstWeekCard(p):'')+(typeof p2NewSigningCard==='function'?p2NewSigningCard(p):'')+(p2InjuryCardHtml(p)||'')+(typeof voxMainBannerHtml==='function'?voxMainBannerHtml(p):'')+(typeof p2FinAdviceCard==='function'?p2FinAdviceCard(p):'')+(typeof p2OffseasonCard==='function'?p2OffseasonCard(p):'')+(typeof p2WinterBreakCard==='function'?p2WinterBreakCard(p):'');
+  const urgent=(typeof p2StoryPendingCard==='function'?p2StoryPendingCard(p):'')+(typeof p2FirstWeekCard==='function'?p2FirstWeekCard(p):'')+(typeof p2NewSigningCard==='function'?p2NewSigningCard(p):'')+(p2InjuryCardHtml(p)||'')+(typeof voxMainBannerHtml==='function'?voxMainBannerHtml(p):'')+(typeof p2FinAdviceCard==='function'?p2FinAdviceCard(p):'')+(typeof p2OffseasonCard==='function'?p2OffseasonCard(p):'')+(typeof p2WinterBreakCard==='function'?p2WinterBreakCard(p):'');
   render(`<div class="page-head">
       <span class="page-eyebrow">CAREER HUB</span>
       <h2>${esc(p.name)} - ${pos.name}(${p.role})</h2>
@@ -8035,16 +8073,16 @@ function showMain(){
     <details class="fold">
       <summary>
         <span>👤 球员档案</span>
-        <span class="fold-chips">综合 ${ovr}/20${p.weeklyReport&&p.weeklyReport.ovr?' ('+signed(p.weeklyReport.ovr.to-p.weeklyReport.ovr.from)+')':''} · 体能 ${Math.round(p.condition.fitness)} · 士气 ${Math.round(p.condition.morale)} · 身价 ¥${(mv/10000).toFixed(1)}万</span>
+        <span class="fold-chips">综合 ${ovr200}/200${ovrDelta?' ('+signed(ovrDelta)+')':''} · 体能 ${Math.round(p.condition.fitness)} · 士气 ${Math.round(p.condition.morale)} · 身价 ¥${(mv/10000).toFixed(1)}万</span>
       </summary>
       <div class="fold-body">
-    ${typeof heroPhotoHTML==='function'?heroPhotoHTML(p,{ovr:ovr,pos:pos.name,mv:mv}):''}
+    ${typeof heroPhotoHTML==='function'?heroPhotoHTML(p,{ovr:ovr200,pos:pos.name,mv:mv}):''}
     <div class="grid-2">
       <div class="card"><h3>基本信息</h3>
         <div class="stat-row"><span class="stat-label">俱乐部</span><span class="stat-value">${p.stats.club.name}</span></div>
         <div class="stat-row"><span class="stat-label">联赛</span><span class="stat-value">${p.stats.club.league}</span></div>
         <div class="stat-row"><span class="stat-label">年龄</span><span class="stat-value">${p.age}岁</span></div>
-        <div class="stat-row"><span class="stat-label">综合能力</span><span class="stat-value">${ovr} / 20</span></div>
+        <div class="stat-row"><span class="stat-label">综合能力</span><span class="stat-value">${ovr200} / 200</span></div>
         <div class="stat-row"><span class="stat-label">声望等级</span><span class="stat-value">${p.repTier||'无名小卒'} (${Math.round(p.reputation)})</span></div>
         <div class="stat-row"><span class="stat-label">队内地位</span><span class="stat-value">${p.isCaptain?'队长':p.isViceCaptain?'副队长':p.squadRank<=3?'核心':p.squadRank<=8?'主力':p.squadRank<=14?'轮换':'替补'}${p.isCaptain?' 🎖️':p.isViceCaptain?' 🎗️':''} (${p.squadRank})</span></div>
         <div class="stat-row"><span class="stat-label">队长</span><span class="stat-value">${p2CaptainLabel(p)}</span></div>
@@ -8054,7 +8092,7 @@ function showMain(){
         <div class="stat-row"><span class="stat-label">存款</span><span class="stat-value">¥${p.money.toLocaleString()}</span></div>
         <div class="stat-row"><span class="stat-label">心态</span><span class="stat-value">${{attack:'全力进攻',slight_attack:'进攻',balanced:'平衡',slight_defence:'防守',defence:'全力防守'}[p.mentality]||'平衡'}</span></div>
         ${p.positionTransform?`<div class="stat-row"><span class="stat-label">位置转型</span><span class="stat-value">${POSITIONS[p.positionTransform.to].name} · 还需${p.positionTransform.weeksLeft}周</span></div>`:''}
-        <p style="font-size:11px;color:#94a3b8;line-height:1.7;margin-top:8px;">综合能力是 <b>1–20 制</b>，不是百分制：位置核心属性均值占 70%，其余场上属性按位置权重占 30%（门将属性对非门将不计）。单项属性上限 20，所以综合的理论满值也是 20；次要属性成长更慢，实战中通常顶不满。参考：球队等级 85 / 70 / 55 的一线队竞争门槛约为综合 15 / 12 / 9，低于门槛会先按替补定位；综合每高 3.5 点，队内顺位约前进 1 位（还受教练信任、状态与声望影响）。</p>
+        <p style="font-size:11px;color:#94a3b8;line-height:1.7;margin-top:8px;">综合能力按 FM 口径显示为 <b>CA 1–200</b>；单项属性仍是 <b>1–20</b>。计算方式：位置核心属性均值占 70%，其余场上属性按位置权重占 30%（门将属性对非门将不计），先得到 1–20 内部值，再按分段表换算成 CA。参考：球队等级 85 / 70 / 55 的一线队竞争门槛约对应内部综合 15 / 12 / 9（CA 约 166 / 142 / 78），低于门槛会先按替补定位；内部综合每高 3.5 点，队内顺位约前进 1 位（还受教练信任、状态与声望影响）。</p>
       </div>
       <div class="card"><h3>状态</h3>${cond}${condNote}${fitnessLow}</div>
     </div>
@@ -8327,7 +8365,7 @@ function showOnboarding(){
   const steps=[
     {t:'这是一款足球生涯模拟',b:'你从一次青训试训开始，靠训练和比赛一点点写下自己的职业生涯。没有固定剧本，选择与表现决定你走到哪。'},
     {t:'每天有 3 点行动力',b:'训练、休息、社交、健身房、学战术、加练各消耗 1 点。点数用完就点「推进一天」，第二天恢复。训练被拒时（受伤、服役、体能太低、行动力用完）会说明原因并给替代选项。'},
-    {t:'训练 → 比赛 → 成长',b:'训练提升属性；比赛日按表现拿到评分与数据；赛季结算把表现换成成长、身价与合同。属性是 1–20 制；潜力不显示精确值，能力页与球探报告只给档位和区间，接近上限时成长变慢是正常的。'},
+    {t:'训练 → 比赛 → 成长',b:'训练提升属性；比赛日按表现拿到评分与数据；赛季结算把表现换成成长、身价与合同。属性是 1–20 制；综合能力按 CA 1–200 显示；潜力不显示精确值，能力页与球探报告只给档位和 CA 区间，接近上限时成长变慢是正常的。'},
     {t:'窗口、存档与退役',b:'欧洲联赛 12–1 月有冬歇转会/特训窗口；每 7 天自动存档，手动存档在「系统 → 存档管理」，共 3 个槽位，也可以导出 JSON。退役后可以走教练线，教练声望决定预算、引援与董事会耐心。'}
   ];
   const it=steps[step-1];
@@ -8394,7 +8432,7 @@ function p2FirstWeekCard(p){
     +'<button class="btn secondary" onclick="showGlossary()">打开术语速查</button></div></div>';
 }
 const GLOSSARY_ROWS=[
-  ['属性（1–20）','单项属性上限是 20，不是百分制；综合能力（OVR）同样按 20 制显示。训练与比赛都会影响它。'],
+  ['属性（1–20）','单项属性上限是 20，不是百分制；综合能力按 FM 口径显示为 CA 1–200，由 1–20 内部综合值按分段表换算。训练与比赛都会影响它。'],
   ['行动力','每天 3 点，训练/社交/恢复都要花；用完点「推进一天」进入下一天。'],
   ['训练被拒','受伤、服役、体能过低、行动力用完或当天已训练时，训练会说明原因并给替代：恢复训练、换强度或推进一天。'],
   ['潜力与球探','潜力不显示精确值：能力页、试训邀请与球探报告只给档位和区间。接近上限时成长变慢是正常的。'],
@@ -8625,7 +8663,7 @@ function weeklyReportCard(p){
     const shown=r.gains.slice(0,5).map(g=>`${g.label}${g.delta>=0?'+':''}${g.delta.toFixed(2)}`).join(' · ');
     rows.push(`<div class="stat-row"><span class="stat-label">属性成长</span><span class="stat-value">${shown}${r.gains.length>5?` 等${r.gains.length}项`:''}</span></div>`);
   }
-  if(r.ovr){ const od=r.ovr.to-r.ovr.from; rows.push(`<div class="stat-row"><span class="stat-label">综合能力</span><span class="stat-value" style="color:${od>=0?'#34d399':'#f87171'}">${r.ovr.from.toFixed(1)} → ${r.ovr.to.toFixed(1)}（${signed(od)}）</span></div>`); }
+  if(r.ovr){ const from200=ovr200From100((Number(r.ovr.from)||0)*5), to200=ovr200From100((Number(r.ovr.to)||0)*5), od=to200-from200; rows.push(`<div class="stat-row"><span class="stat-label">综合能力</span><span class="stat-value" style="color:${od>=0?'#34d399':'#f87171'}">${from200} → ${to200}${od?`（${signed(od)}）`:''}</span></div>`); }
   if(r.cond&&r.cond.length) rows.push(`<div class="stat-row"><span class="stat-label">本周状态</span><span class="stat-value">${r.cond.map(c=>`${c.label}${signed(c.to-c.from)}`).join(' · ')}</span></div>`);
   if(r.income||r.expense){
     rows.push(`<div class="stat-row"><span class="stat-label">本周收入</span><span class="stat-value" style="color:#34d399;">+¥${(r.income||0).toLocaleString()}</span></div>`);
@@ -9192,7 +9230,7 @@ function squadRankReason(p,snap,rankNow){
     if(Math.abs(coachNow-snap.coach)>=2) chg.push(`教练信任 ${Math.round(snap.coach)}→${Math.round(coachNow)}`);
     if(Math.abs(formNow-snap.form)>=0.5) chg.push(`近期状态 ${snap.form.toFixed(1)}→${formNow.toFixed(1)}`);
     if(Math.abs(repNow-snap.rep)>=2) chg.push(`声望 ${Math.round(snap.rep)}→${Math.round(repNow)}`);
-    if(Math.abs(ovrNow-snap.ovr)>=0.2) chg.push(`综合能力 ${snap.ovr.toFixed(1)}→${ovrNow.toFixed(1)}`);
+    if(Math.abs(ovrNow-snap.ovr)>=0.2) chg.push(`综合能力 ${ovr200From100(snap.ovr*5)}→${ovr200From100(calcOverallFloat(p)*5)}`);
     push(dBase,(chg.length?`综合评估（${chg.join('、')}）`:'综合评估')+`：顺位${dBase>0?'后移':'前移'}约 ${Math.abs(dBase)} 位`);
   }
   // 训练积分兑换：bonus 越大顺位越靠前
@@ -9203,7 +9241,7 @@ function squadRankReason(p,snap,rankNow){
   // 同位置竞争者（被谁挤掉）
   try{
     const pen=r47CompetitionRank(p);
-    if(pen>0){ const rv=r47RivalUpdate(p); push(pen,rv?`同位置竞争者 ${rv.name}（${rv.age}岁·能力${rv.ability}）更强，被挤后 ${pen} 位`:`同位置竞争者更强，被挤后 ${pen} 位`); }
+    if(pen>0){ const rv=r47RivalUpdate(p); push(pen,rv?`同位置竞争者 ${rv.name}（${rv.age}岁·能力${ovr200From100(rv.ability)}）更强，被挤后 ${pen} 位`:`同位置竞争者更强，被挤后 ${pen} 位`); }
   }catch(e){/*静默:界面*/}
   try{ const a=p2CoachAdaptState(p); if(a&&a.rank) push(a.rank,`新帅适应期，临时后移 ${a.rank} 位`); }catch(e){/*静默:界面*/}
   // 联赛报名政策
@@ -9221,9 +9259,10 @@ function squadRankReason(p,snap,rankNow){
     if(!String(p.stats.club.name||'').includes('青训')&&repNow<70){
       const clubLv=clamp(Number(p.stats.club.level)||60,30,99);
       const clubApps=Number((p.stats.byClub&&p.stats.byClub[p.stats.club.name]||{}).appearances)||0;
-      if(ovrNow<clubLv/5-2){
+      const gate=clubLv/5-2;
+      if(ovrNow<gate){
         const floor=clubApps<6?(clubLv>=85?16:clubLv>=70?15:13):(clubLv>=85?12:clubLv>=70?10:8);
-        push(1,`能力 ${ovrNow.toFixed(1)} 未达 ${p.stats.club.name} 一线队门槛，顺位保底在第 ${floor} 位`);
+        push(1,`能力 ${ovr200Of(p)} 未达 ${p.stats.club.name} 一线队门槛（CA 约 ${ovr200From100(gate*5)}），顺位保底在第 ${floor} 位`);
       }
     }
   }catch(e){/*静默:界面*/}
@@ -9324,30 +9363,32 @@ function lastSeasonProduction(p){
 function mvLastSeasonFactor(p){
   const q=lastSeasonProduction(p);
   if(!q) return 1;
-  const goalF=clamp(1+(q.rate-0.27)*0.57*q.weight,0.85,1.62);
+  const goalF=clamp(1+(q.rate-0.27)*0.57*q.weight,0.85,1.35);
   const ratingF=q.rating>0?clamp(1+(q.rating-6.8)*0.015,0.97,1.04):1;
-  return clamp(goalF*ratingF,0.85,1.66);
+  return clamp(goalF*ratingF,0.85,1.35);
 }
 function estimateMarketValue(p){
-  const ovr=calcOverall(p);
-  const ageF=mvAgeFactor(p.age)*MV_AGE_SCALE;
-  const repFactor=1+p.reputation/50;
-  const posFactor=p.position==='GK'?0.8:1.0;
-  const pot=clamp(Number(p.hidden&&p.hidden.potential)||ovr,1,99);
-  // 23 岁以下按“潜力差”溢价；成熟球员潜力已兑现，不再加成
-  const potFactor=p.age<=23?clamp(1+(pot-ovr)*0.012,0.95,1.60):1;
+  // R287：玩家身价改走与世界成交价同一个中性核心；
+  // 声望、状态、潜力、位置、天赋、上季产出只作为个人乘子叠加。
+  const ca=clamp(calcOverall(p)*5,1,99);
+  const age=Number(p.age)||24;
   const ctr=p.contract||{};
   const yearsLeft=ctr.until?Math.max(0,Number(ctr.until)-currentYear()):3;
-  const contractFactor=yearsLeft<=0?0.62:yearsLeft===1?0.88:yearsLeft===2?1.0:yearsLeft===3?1.08:1.12;
-  const avg=seasonAvgRating(p,Game.season);
-  const formFactor=clamp(1+((avg>0?avg:6.5)-6.5)*0.08,0.88,1.14);
   const leagueKey=(p.stats&&p.stats.club&&p.stats.club.leagueKey)||'';
   const level=Number((LEAGUES[leagueKey]||{}).level)||70;
-  const leagueFactor=clamp(1+(level-75)/250,0.86,1.14);
+  const core=p2ValueCore(ca,age,yearsLeft,leagueKey);
+  const repFactor=clamp(0.85+(Number(p.reputation)||0)/200,0.85,1.35);
+  const posFactor=p.position==='GK'?0.8:1.0;
+  const ovr100=ca;
+  const pot=clamp(Number(p.hidden&&p.hidden.potential)||ovr100,1,99);
+  const potFactor=p.age<=23?clamp(1+(pot-ovr100)*0.010,0.95,1.35):1;
+  const avg=seasonAvgRating(p,Game.season);
+  const formFactor=clamp(1+((avg>0?avg:6.5)-6.5)*0.08,0.90,1.10);
+  const leagueFactor=clamp(1+(level-75)/250,0.90,1.10);
   const talents=Array.isArray(p.talents)?p.talents:[];
-  let val=ovr*ovr*10000*ageF*potFactor*contractFactor*formFactor*leagueFactor*repFactor*posFactor;
-  val*=(0.5+talents.length*0.08); // 天赋加成
-  val*=mvLastSeasonFactor(p); // Round 88：上季产出加成
+  let val=core*repFactor*potFactor*formFactor*leagueFactor*posFactor;
+  val*=(0.62+talents.length*0.08); // 天赋仍是个人溢价，但不再压过世界核心
+  val*=mvLastSeasonFactor(p);
   return mvRound(val);
 }
 // 市场热度：球探与转会市场对球员的兴趣指数（0-100），只用于主界面展示
@@ -9580,6 +9621,12 @@ function isNationalStarter(p,m){
   if(fit<45) chance-=0.35; else if(fit<60) chance-=0.15;
   return Math.random()<clamp(chance,0.1,0.95);
 }
+// 更衣室派系对首发概率的修正（百分点）。R283：面板文案与判定共用这一处取数。
+function p2StartFactionBonus(p){
+  const f=(p&&p.factions)||{};
+  const support=(Number(f.veterans)||0)+(Number(f.youngsters)||0)+(Number(f.coach_loyal)||0)+(Number(f.foreign)||0);
+  return clamp(support/6,-4,6);
+}
 // 首发判定：由队内顺位、教练信任、体能、状态共同决定，强队也会有轮换
 function isStarter(p){
   if(!p||!p.stats||!p.stats.club) return true;
@@ -9598,10 +9645,7 @@ function isStarter(p){
     else if(org==='academy') chance-=12;
   }
   // 更衣室派系：派系支持度高更容易被队友推上首发，派系对立则相反
-  if(p.factions){
-    const support=(p.factions.veterans||0)+(p.factions.youngsters||0)+(p.factions.coach_loyal||0)+(p.factions.foreign||0);
-    chance+=clamp(support/6,-4,6);
-  }
+  if(p.factions) chance+=p2StartFactionBonus(p);
   if(p.positionTransform) chance-=10;
   // Round 32：副位置成熟度 ≥65 且队内该位置缺人时，多面手更容易被排进首发
   if(typeof p2AltCoverBonus==='function') chance+=p2AltCoverBonus(p)*2;
@@ -10571,6 +10615,16 @@ function addHighlight(m,type,text){
     m.highlights.length=10;
   }
 }
+// R286：比分时间线。只记本场内存（不落存档），每次比分变更后调用一次；
+// h/a 是变更后的比分，用于校验「扳平/反超/锁定胜局」这类只在特定比分状态下成立的措辞。
+// 跳过比赛没有逐球时间线，goalLog 缺失即视为「未知」，校验按不通过处理，不猜。
+function p2GoalLogAdd(m,side,kind,minute){
+  if(!m||!m.score||(side!=='home'&&side!=='away')) return;
+  const log=Array.isArray(m.goalLog)?m.goalLog:(m.goalLog=[]);
+  const min=Math.max(0,Math.min(130,Math.round(Number(minute===undefined?m.minute:minute)||0)));
+  log.push({min:min,side:side,kind:String(kind||'team'),h:Number(m.score.home)||0,a:Number(m.score.away)||0});
+  if(log.length>40) log.splice(0,log.length-40);
+}
 function canCommandMatch(p,m){
   if(!p||!m) return false;
   if(p.isCaptain) return true;
@@ -11085,7 +11139,26 @@ function preMatch(){
     return;
   }
   // 国家队比赛使用专属赛前流程，不再套用俱乐部的战术会议与抵达球场
-  if(m.isNational){ nationalArrivalScreen(); return; }
+  if(m.isNational){
+    // R285：「自动准备」必须真的自动——国家队同样跳过大巴/抵达/更衣室，直接开球
+    if(m.autoRitual){
+      m.tacticsChosen=true;
+      m.starterChecked=true;
+      if(m.isStarter===undefined) m.isStarter=isNationalStarter(p,m);
+      if(!m.isStarter) return showBenchScene();
+      p2AutoMeal(m);
+      m.entranceDone=true; m.arrivalDone=true;
+      if(!m.__autoPrepLogged){
+        m.__autoPrepLogged=true;
+        Game.log.unshift(`[${dateStr()}] 你没有多做仪式，系好鞋带直接投入比赛。`);
+        Game.log.unshift(`[${dateStr()}] 自动准备：跳过赛前仪式与入场流程，直接开球。`);
+      }
+      buildMatchScenes();
+      matchLoop();
+      return;
+    }
+    nationalArrivalScreen(); return;
+  }
   // 平衡/快速模式：不再强制翻两页战术板，直接沿用上次的打法；想改可点「调整战术」
   if(!m.tacticsChosen && !m.manualTactics && (p2PaceMode(p)!=='full'||p2FlowFastPre(p))) p2AutoTactics(m,p);
   if(!m.tacticsChosen){ showTacticsScreen(); return; }
@@ -11097,7 +11170,8 @@ function preMatch(){
   }
   if(!m.isStarter){ showBenchScene(); return; }
   // Round 35：普通场用一张「赛前准备」卡完成布置，不再分别翻战术/心态/阵容屏
-  if(!m.manualTactics && !p2FlowFastPre(p) && typeof showPreMatchHub==='function' && p2FlowUseHub(m)){ showPreMatchHub(); return; }
+  // R285：自动准备（quickMatchStart）已明确要求跳过仪式，不能再被这张卡拦住
+  if(!m.autoRitual && !m.manualTactics && !p2FlowFastPre(p) && typeof showPreMatchHub==='function' && p2FlowUseHub(m)){ showPreMatchHub(); return; }
   // 平衡/快速模式：普通比赛跳过入场、抵达、更衣室、热身、通道与动员，直接进入比赛
   // 是否跳过由节奏设置决定：只有「完整赛前仪式」按钮（manualTactics）或大赛才强制展开。
   // 从战术板、赛前饮食等入口进来的普通比赛同样自动跳过，避免改完战术被整段仪式拦住。
@@ -11110,7 +11184,7 @@ function preMatch(){
     if(!m.__autoPrepLogged){
       m.__autoPrepLogged=true;
       Game.log.unshift(`[${dateStr()}] 你没有多做仪式，系好鞋带直接投入比赛。`);
-      Game.log.unshift(`[${dateStr()}] 自动准备：跳过赛前仪式（锐利 −20）；赛后径直回通道（压力 +2）。`);
+      Game.log.unshift(`[${dateStr()}] 自动准备：跳过赛前仪式与入场流程，直接开球。`);
     }
     buildMatchScenes();
     matchLoop();
@@ -11250,6 +11324,7 @@ function benchEnterPitch(){
   const [fl_1,fl_2]=m.isHome?matchGoalLambdas(myLevel+tacticShapeMods(p,m).atk,oppEff,0.18):matchGoalLambdas(oppEff,myLevel+tacticShapeMods(p,m).atk,0.18);
   const [fh,fal]=poissonScoreline(fl_1*t,fl_2*t);
   m.score={home:fh,away:fal};
+  p2GoalLogAdd(m,'home','base',m.subMinute);
   m.half=m.subMinute>=45?2:1;
   m.playerMinutes=Math.max(1,90-m.subMinute);
   const idx=m.scenes.findIndex(s=>s.minute>=m.subMinute);
@@ -11567,7 +11642,7 @@ function p2LockerCard(p){
     ${L.conflict?`<div class="card"><p class="info">💥 与 ${L.conflict.name} 的冲突未化解（第${L.conflict.times+1}次处理）</p>
       <button class="btn secondary" onclick="resolveLockerConflict('apology')">道歉</button>
       <button class="btn secondary" onclick="resolveLockerConflict('support')">公开支持</button>
-      <button class="btn secondary" onclick="resolveLockerConflict('ignore')">冷处理</button></div>`:''}</div>${typeof p2PoliticsCard==='function'?p2PoliticsCard(p):''}`;
+      <button class="btn secondary" onclick="resolveLockerConflict('ignore')">冷处理</button></div>`:''}</div>${typeof p2PoliticsSummaryHtml==='function'?p2PoliticsSummaryHtml(p):''}`;
 }
 
 // ===================== R162：队内政治（派系档位 / 队长之争 / 转会意愿） =====================
@@ -11587,16 +11662,26 @@ function p2PoliticsEnsure(p){
   if(typeof t.captainBidDay!=='number'||!isFinite(t.captainBidDay)) t.captainBidDay=0;
   if(typeof t.showdownYear!=='number'||!isFinite(t.showdownYear)) t.showdownYear=0;
   if(t.captainBidResult===undefined) t.captainBidResult=null;
+  // R283：养成字段（旧档自动补齐，不新增顶层存档键，不改 p.factions 结构）
+  if(typeof t.campSince!=='number'||!isFinite(t.campSince)) t.campSince=0;
+  if(typeof t.campSwitch!=='number'||!isFinite(t.campSwitch)) t.campSwitch=0;
+  if(t.focus===undefined) t.focus=null;
+  if(typeof t.lastBondDay!=='number'||!isFinite(t.lastBondDay)) t.lastBondDay=0;
+  if(typeof t.driftWeek!=='string'&&typeof t.driftWeek!=='number') t.driftWeek='';
+  if(t.lastDrift===undefined) t.lastDrift=null;
+  if(!Array.isArray(t.history)) t.history=[];
+  if(typeof t.idleWeeks!=='number'||!isFinite(t.idleWeeks)) t.idleWeeks=0;
+  if(typeof t.lastApps!=='number'||!isFinite(t.lastApps)) t.lastApps=0;
   initFactions(p);
   return p;
 }
 function p2FactionTier(v){
   const n=Number(v)||0;
-  if(n>=12) return {label:'核心',color:'#4ade80'};
+  if(n>=12) return {label:'亲近',color:'#4ade80'};
   if(n>=4) return {label:'友好',color:'#22d3ee'};
-  if(n>-4) return {label:'中立',color:'#fbbf24'};
-  if(n>-12) return {label:'冷淡',color:'#fb923c'};
-  return {label:'敌对',color:'#f87171'};
+  if(n>-4) return {label:'一般',color:'#fbbf24'};
+  if(n>-12) return {label:'疏远',color:'#fb923c'};
+  return {label:'对立',color:'#f87171'};
 }
 function p2FactionSum(p){
   initFactions(p);
@@ -11607,15 +11692,49 @@ function p2FactionName(key){
   const m=P2_FACTION_META.find(x=>x.key===key);
   return m?m.name:(key==='neutral'?'中立':'未表态');
 }
+// R283：养成读数组装。派系只以「档位 + 本周变化 + 一句原因」示人，不再露原始数值。
+function p2PoliticsWeekKey(){
+  try{ if(typeof p2StoryWeekKey==='function') return p2StoryWeekKey(); }catch(e){}
+  const d=Game.date||{};
+  return Math.floor(((Number(d.year)||0)*372+(Number(d.month)||1)*31+(Number(d.day)||1))/7);
+}
+function p2PoliticsTalkWeek(){
+  const d=Game.date||{};
+  return `${d.year||0}-${d.month||1}-W${Math.floor(((Number(d.day)||1)-1)/7)}`;
+}
+function p2FactionView(p){
+  p2PoliticsEnsure(p);
+  const f=p.factions||{};
+  const ld=p.politics&&p.politics.lastDrift;
+  return P2_FACTION_META.map(m=>{
+    const v=Number(f[m.key])||0;
+    const delta=ld&&ld.deltas?(Number(ld.deltas[m.key])||0):0;
+    const hit=ld&&Array.isArray(ld.notes)?ld.notes.find(n=>n&&n.key===m.key):null;
+    return {key:m.key,name:m.name,v,tier:p2FactionTier(v),delta,why:hit?String(hit.text||''):''};
+  });
+}
+function p2FactionDeltaText(d){
+  const n=Number(d)||0;
+  return n?`本周 ${n>0?'+':''}${n}`:'本周持平';
+}
+function p2FactionTrendArrow(d){
+  const n=Number(d)||0;
+  if(n>0) return '<span style="color:#4ade80;">↑</span>';
+  if(n<0) return '<span style="color:#f87171;">↓</span>';
+  return '<span style="color:#94a3b8;">→</span>';
+}
+function p2FactionGainText(p,key,n){
+  const cur=Number((p&&p.factions&&p.factions[key])||0);
+  return `${p2FactionName(key)} ${n>0?'+':''}${n}（${p2FactionTier(cur+n).label}）`;
+}
 // R182：赛前简报与赛前发言共用同一份派系数据（不新建政治数值）
 function p2FactionWind(p){
   p2PoliticsEnsure(p);
-  const f=p.factions||{};
-  const rows=P2_FACTION_META.map(m=>({key:m.key,name:m.name,v:Number(f[m.key])||0}));
+  const rows=p2FactionView(p);
   const sum=p2FactionSum(p);
-  const lowest=rows.slice().sort((a,b)=>a.v-b.v)[0]||{key:'',name:'更衣室',v:0};
-  const highest=rows.slice().sort((a,b)=>b.v-a.v)[0]||{key:'',name:'更衣室',v:0};
-  return {sum,lowest,highest,label:sum>=8?'团结':sum<=-8?'分裂':sum>=-3?'平稳':'微妙'};
+  const lowest=rows.slice().sort((a,b)=>a.v-b.v)[0]||{key:'',name:'更衣室',v:0,tier:p2FactionTier(0)};
+  const highest=rows.slice().sort((a,b)=>b.v-a.v)[0]||{key:'',name:'更衣室',v:0,tier:p2FactionTier(0)};
+  return {sum,lowest,highest,rows,label:sum>=8?'团结':sum<=-8?'分裂':sum>=-3?'平稳':'微妙'};
 }
 // 离队意愿：教练信任、派系总和、顺位、声望四条已有曲线合成，0-100
 function p2PoliticsIntent(p){
@@ -11632,57 +11751,292 @@ function p2IntentLabel(v){
   if(v>=30) return {label:'观望',color:'#fbbf24'};
   return {label:'安心',color:'#4ade80'};
 }
+// R283：离队意愿不再直接示人，改为转会页的「心境 + 原因」。数字只作为内部阈值。
+function p2TransferMood(p){
+  if(!p) return {level:'settled',intent:0,reasons:[]};
+  const coach=Number(p.relationships&&p.relationships.coach)||50;
+  const rank=Number(p.squadRank)||20;
+  const sum=p2FactionSum(p);
+  const rep=Number(p.reputation)||0;
+  const apps=Number(p.stats&&p.stats.season&&p.stats.season.appearances)||0;
+  const reasons=[];
+  if(rank>14) reasons.push(`你的顺位是第 ${rank}，本赛季只出场 ${apps} 次`);
+  else if(rank<=11&&apps>0) reasons.push(`你已经站稳首发（顺位第 ${rank}，出场 ${apps} 次）`);
+  if(coach<40) reasons.push(`教练信任只有 ${Math.round(coach)}，他不太想再用你`);
+  else if(coach>=65) reasons.push(`教练信任 ${Math.round(coach)}，他把你当成计划的一部分`);
+  if(sum<=-6) reasons.push('更衣室里多数派系对你不友好');
+  else if(sum>=8) reasons.push('更衣室里多数派系站在你这边');
+  if(rep<=20) reasons.push(`声望只有 ${Math.round(rep)}，外面的球队还不认识你`);
+  const intent=p2PoliticsIntent(p);
+  const level=intent>=65?'want_out':intent>=50?'restless':intent>=30?'watching':'settled';
+  return {level,intent,reasons};
+}
+function p2TransferMoodHtml(p){
+  const m=p2TransferMood(p);
+  const head={want_out:'你在认真考虑离开',restless:'你偶尔会想换个环境',watching:'你还在观望',settled:'你暂时没想过离开'}[m.level]||'';
+  const color=m.level==='want_out'?'#f87171':m.level==='restless'?'#fb923c':m.level==='watching'?'#fbbf24':'#4ade80';
+  return `<div class="card"><h3>🧭 你和这支球队</h3>
+    <p class="info" style="color:${color};font-weight:700;">${head}</p>
+    ${m.reasons.map(x=>`<p class="info">· ${x}</p>`).join('')||'<p class="info">暂时没有明显的裂缝。</p>'}
+  </div>`;
+}
+const P2_STAND_TABLE={
+  veterans:{veterans:6,youngsters:-3,coach_loyal:-1,coach:-1,teammates:2,morale:1},
+  youngsters:{youngsters:6,veterans:-3,coach_loyal:-1,coach:-1,teammates:2,morale:2},
+  foreign:{foreign:6,veterans:-2,coach_loyal:-2,teammates:1},
+  coach_loyal:{coach_loyal:6,veterans:-2,youngsters:-2,coach:3,teammates:-1},
+  neutral:{veterans:-1,youngsters:-1,foreign:-1,coach_loyal:-1,teammates:3,morale:1}
+};
+function p2PoliticsBaseGate(p){
+  if(!p) return {ok:false,reason:'没有可用的生涯'};
+  p2PoliticsEnsure(p);
+  if(p.retired||p.freeAgent) return {ok:false,reason:'你目前没有俱乐部，更衣室暂时轮不到你说话。'};
+  if(!(p.stats&&p.stats.club&&p.stats.club.name)) return {ok:false,reason:'你还没有加入任何球队。'};
+  const rank=Number(p.squadRank)||20;
+  const apps=Number(p.stats&&p.stats.season&&p.stats.season.appearances)||0;
+  if(rank>14&&apps<1) return {ok:false,reason:`你还没进更衣室的圈子：当前顺位 ${rank}/20，本赛季 0 出场。先在训练和比赛里让人记住你。`};
+  return {ok:true};
+}
 function p2PoliticsStand(key){
   const p=Game.player; if(!p) return showMain();
   p2PoliticsEnsure(p); p2LockerEnsure(p);
-  if(daySerial(Game.date)-(p.politics.lastStandDay||0)<7){
-    showToast('本周已经表过态，等下周','warning'); return showLockerRoom();
+  const base=p2PoliticsBaseGate(p);
+  if(!base.ok){ showToast(base.reason,'warning'); return showLockerRoom(); }
+  const t=p.politics, today=daySerial(Game.date);
+  const gap=today-(Number(t.lastStandDay)||0);
+  const mode=!t.camp?'first':(key===t.camp?'reinforce':'switch');
+  if(mode==='reinforce'&&gap<56){ showToast(`同一立场每 8 周才能再强化一次，还差 ${56-gap} 天`,'warning'); return showLockerRoom(); }
+  if(mode==='switch'&&gap<28){ showToast(`改立场至少要等 4 周，还差 ${28-gap} 天`,'warning'); return showLockerRoom(); }
+  const d=P2_STAND_TABLE[key]; if(!d) return showLockerRoom();
+  const pact={veterans:0,youngsters:0,foreign:0,coach_loyal:0};
+  let respectDelta=0;
+  if(mode==='first'){
+    P2_FACTION_META.forEach(m=>{ pact[m.key]=Number(d[m.key])||0; });
+  } else if(mode==='reinforce'){
+    if(key!=='neutral') pact[key]=2;
+  } else {
+    const old=t.camp;
+    if(old&&old!=='neutral') pact[old]=(pact[old]||0)-6;
+    if(key!=='neutral') pact[key]=(pact[key]||0)+4;
+    respectDelta=-3;
   }
-  const table={
-    veterans:{veterans:6,youngsters:-3,coach_loyal:-1,coach:-1,teammates:2,morale:1},
-    youngsters:{youngsters:6,veterans:-3,coach_loyal:-1,coach:-1,teammates:2,morale:2},
-    foreign:{foreign:6,veterans:-2,coach_loyal:-2,teammates:1},
-    coach_loyal:{coach_loyal:6,veterans:-2,youngsters:-2,coach:3,teammates:-1},
-    neutral:{veterans:-1,youngsters:-1,foreign:-1,coach_loyal:-1,teammates:3,morale:1}
-  };
-  const d=table[key]; if(!d) return showLockerRoom();
-  ['veterans','youngsters','foreign','coach_loyal'].forEach(k=>{
-    if(d[k]) p.factions[k]=clamp((p.factions[k]||0)+d[k],-20,20);
+  P2_FACTION_META.forEach(m=>{
+    const dv=Number(pact[m.key])||0;
+    if(dv) p.factions[m.key]=clamp((Number(p.factions[m.key])||0)+dv,-20,20);
   });
-  if(d.coach) fxBump(p,'relationships.coach',d.coach,50,0,100);
-  if(d.teammates) fxBump(p,'relationships.teammates.general',d.teammates,50,0,100);
-  if(d.morale) p.locker.teamMorale=clamp((p.locker.teamMorale||50)+d.morale,0,100);
-  p.politics.camp=key;
-  p.politics.lastStandDay=daySerial(Game.date);
-  Game.log.unshift(`[${dateStr()}] 🏛️ 你在更衣室公开站到了${p2FactionName(key)}这边。`);
-  showToast(`你站到了${p2FactionName(key)}这边`,'info');
+  if(mode==='first'){
+    if(d.coach) fxBump(p,'relationships.coach',d.coach,50,0,100);
+    if(d.teammates) fxBump(p,'relationships.teammates.general',d.teammates,50,0,100);
+    if(d.morale) p.locker.teamMorale=clamp((Number(p.locker.teamMorale)||50)+d.morale,0,100);
+  } else if(key==='neutral'){
+    fxBump(p,'relationships.teammates.general',2,50,0,100);
+  }
+  if(respectDelta) p.locker.respect=clamp((Number(p.locker.respect)||50)+respectDelta,0,100);
+  if(mode==='switch') t.campSwitch=(Number(t.campSwitch)||0)+1;
+  t.camp=key;
+  t.lastStandDay=today;
+  if(mode!=='reinforce') t.campSince=today;
+  const verb=mode==='first'?'站到':mode==='switch'?'改站':'重申';
+  Game.log.unshift(`[${dateStr()}] 🏛️ 你在更衣室${verb}${p2FactionName(key)}这边。`);
+  showToast(mode==='switch'?`你改站${p2FactionName(key)}，旧阵营会记住这件事`:`你${verb}${p2FactionName(key)}这边`, mode==='switch'?'warning':'info');
   saveGame(undefined,true);
   showLockerRoom();
 }
-function p2PoliticsCard(p,noRows){
+function p2StandEffectText(p,key,mode){
+  if(mode==='reinforce'){
+    if(key==='neutral') return '队友 +2 · 8 周后再次强化';
+    return `${p2FactionGainText(p,key,2)} · 8 周后再次强化`;
+  }
+  if(mode==='switch'){
+    const old=p.politics.camp;
+    const head=(old&&old!=='neutral')?`${p2FactionName(old)} -6 · `:'';
+    if(key==='neutral') return `${head}队友 +2 · 威望 -3 · 4 周后才能再改`;
+    return `${head}${p2FactionGainText(p,key,4)} · 威望 -3 · 4 周后才能再改`;
+  }
+  const d=P2_STAND_TABLE[key]||{};
+  const parts=[];
+  if(key==='neutral') parts.push('各派 -1');
+  else parts.push(p2FactionGainText(p,key,Number(d[key])||0));
+  if(d.teammates) parts.push(`队友 ${d.teammates>0?'+':''}${d.teammates}`);
+  if(d.coach) parts.push(`教练信任 ${d.coach>0?'+':''}${d.coach}`);
+  if(d.morale) parts.push(`士气 ${d.morale>0?'+':''}${d.morale}`);
+  parts.push('承诺 8 周');
+  return parts.join(' · ');
+}
+// R283：主界面只放摘要 + 入口（R282 规则），全文与操作在 showLockerRoom 独立页
+function p2PoliticsSummaryHtml(p){
+  if(!p) return '';
   p2PoliticsEnsure(p);
-  const f=p.factions||{};
-  const rows=noRows?'':P2_FACTION_META.map(m=>{
-    const v=Number(f[m.key])||0, t=p2FactionTier(v);
-    return `<div class="stat-row"><span class="stat-label">${m.name}</span><span class="stat-value" style="color:${t.color}">${v>0?'+':''}${v} · ${t.label}</span></div>`;
-  }).join('');
-  const intent=p2PoliticsIntent(p), il=p2IntentLabel(intent);
+  const wind=p2FactionWind(p);
+  const t=p.politics;
+  const top=(wind.rows||[]).slice().sort((a,b)=>Math.abs(b.delta)-Math.abs(a.delta))[0];
+  const move=top&&top.delta?` · ${top.name}${p2FactionDeltaText(top.delta)}`:'';
   const today=Game.date?daySerial(Game.date):0;
-  const canStand=today-(p.politics.lastStandDay||0)>=7;
-  const btns=canStand
-    ? P2_FACTION_META.map(m=>`<button class="btn secondary" style="margin:4px 4px 0 0;padding:7px 10px;font-size:12px;" onclick="p2PoliticsStand('${m.key}')">站${m.name}</button>`).join('')
-      +`<button class="btn secondary" style="margin:4px 4px 0 0;padding:7px 10px;font-size:12px;" onclick="p2PoliticsStand('neutral')">不站队</button>`
-    : `<p class="info">本周已表态：${p2FactionName(p.politics.camp||'neutral')}。下周可再表态。</p>`;
-  const canBid=!p.isCaptain&&(p.isViceCaptain||(Number(p.squadRank)||20)<=3)&&(Number(p.age)||0)>=20
-    &&today-(p.politics.captainBidDay||0)>=90;
-  const bidBtn=canBid?`<button class="btn" style="margin-top:8px;" onclick="showCaptainContest()">🎖️ 发起队长之争</button>`:'';
-  const showdown=p2PoliticsShowdownAvailable(p)
-    ?`<button class="btn secondary" style="margin-top:8px;" onclick="showPoliticsShowdown()">🎭 召集队内摊牌（本赛季 1 次）</button>`:'';
-  const leave=intent>=65?`<button class="btn danger" style="margin-top:8px;" onclick="requestTransfer()">🚪 递交转会申请</button>`:'';
+  const focusActive=t.focus&&Number(t.focus.untilDay)>today;
+  const bond=focusActive?`这周你在${p2FactionName(t.focus.key)}那边花时间`:'本周还没在更衣室花时间';
+  const standing=t.camp?(t.camp==='neutral'?'不站队':p2FactionName(t.camp)):'未表态';
   return `<div class="card"><h3>🏛️ 更衣室政治</h3>
+    <p class="info">风向：${wind.label}${move}</p>
+    <p class="info">${bond}</p>
+    <p class="info">你的立场：${standing}</p>
+    <button class="btn secondary" onclick="showLockerRoom()">进入更衣室 ›</button></div>`;
+}
+function p2PoliticsPanelHtml(p){
+  p2PoliticsEnsure(p); p2LockerEnsure(p);
+  const today=Game.date?daySerial(Game.date):0;
+  const t=p.politics;
+  const rows=p2FactionView(p).map(m=>`<div class="stat-row"><span class="stat-label">${m.name} ${p2FactionTrendArrow(m.delta)}</span><span class="stat-value" style="color:${m.tier.color}">${m.tier.label} · ${p2FactionDeltaText(m.delta)}</span></div>${m.why?`<p class="info" style="margin:-2px 0 6px;font-size:11px;">${esc(m.why)}</p>`:''}`).join('');
+  const raw=Math.round(p2StartFactionBonus(p))||0;
+  const startTxt=raw>=3?'明显有利':raw>=1?'略有帮助':raw<=-3?'明显拖累':raw<=-1?'略有拖累':'没有影响';
+  const startColor=raw>0?'#4ade80':raw<0?'#f87171':'#94a3b8';
+  const base=p2PoliticsBaseGate(p);
+  const gap=today-(Number(t.lastStandDay)||0);
+  const modeFor=key=>!t.camp?'first':(key===t.camp?'reinforce':'switch');
+  const waitOf=mode=>mode==='reinforce'?Math.max(0,56-gap):mode==='switch'?Math.max(0,28-gap):0;
+  const standBtn=(key,label)=>{
+    const mode=modeFor(key), wait=waitOf(mode), ok=wait<=0;
+    return `<button class="btn secondary" ${ok?'':'disabled'} style="display:block;width:100%;text-align:left;margin:5px 0;padding:8px 10px;font-size:12px;${ok?'':'opacity:.45;'}" onclick="p2PoliticsStand('${key}')">${label}<span class="eff-line">${p2StandEffectText(p,key,mode)}${ok?'':` · ${wait} 天后`}</span></button>`;
+  };
+  const standHtml=!base.ok?`<p class="info">${base.reason}</p>`
+    :P2_FACTION_META.map(m=>standBtn(m.key,`${modeFor(m.key)==='switch'?'改站':modeFor(m.key)==='reinforce'?'重申':'站'}${m.name}`)).join('')
+      +standBtn('neutral','不站队');
+  const focusActive=t.focus&&Number(t.focus.untilDay)>today;
+  const bondReady=today-(Number(t.lastBondDay)||0)>=14;
+  const bondLine=x=>`<p class="info" style="margin-top:6px;font-size:11px;color:#94a3b8;">${x}</p>`;
+  const bondHtml=bondReady?`
+      <button class="btn secondary" style="display:block;width:100%;text-align:left;margin:5px 0;padding:8px 10px;font-size:12px;" onclick="p2PoliticsBond('youngsters')">陪年轻队员加练<span class="eff-line">年轻派 +3 · 年轻队友关系 +2 · 老将派 -1 · 体能 -2 · 未来 4 周年轻派 +1/周</span></button>
+      <button class="btn secondary" style="display:block;width:100%;text-align:left;margin:5px 0;padding:8px 10px;font-size:12px;" onclick="p2PoliticsBond('veterans')">跟老将们喝一杯<span class="eff-line">老将派 +3 · 老将关系 +2 · 年轻派 -1 · 未来 4 周老将派 +1/周</span></button>
+      <button class="btn secondary" style="display:block;width:100%;text-align:left;margin:5px 0;padding:8px 10px;font-size:12px;" onclick="p2PoliticsBond('coach_loyal')">找教练过比赛录像<span class="eff-line">教练嫡系 +3 · 教练信任 +2 · 未来 4 周教练嫡系 +1/周</span></button>
+      <button class="btn secondary" style="display:block;width:100%;text-align:left;margin:5px 0;padding:8px 10px;font-size:12px;" onclick="p2PoliticsBond('none')">谁也不刻意靠拢<span class="eff-line">队友关系 +1 · 不形成承诺</span></button>`
+    :`<p class="info">你在更衣室里刚花过时间，${14-(today-(Number(t.lastBondDay)||0))} 天后再来。</p>`;
+  const focusHtml=focusActive?bondLine(`当前方向：${p2FactionName(t.focus.key)}（还剩 ${Math.max(1,Math.ceil((Number(t.focus.untilDay)-today)/7))} 周）`):'';
+  const captainReady=typeof p2CaptainEligible==='function'&&p2CaptainEligible(p)&&(today-(Number(t.captainBidDay)||0)>=90);
+  const captainHtml=captainReady?`<button class="btn" style="margin-top:6px;" onclick="showCaptainContest()">🎖️ 发起队长之争</button>`
+    :`<p class="info">队长之争：${p.isCaptain?'你已经是队长':(typeof p2CaptainEligible!=='function'||!p2CaptainEligible(p))?'需要 20 岁以上、顺位前 3 或副队长':'距离上次争袖标不满 90 天'}。</p>`;
+  const showGate=(typeof p2PoliticsShowdownGate==='function')?p2PoliticsShowdownGate(p):{ok:false,reason:''};
+  const showdownHtml=showGate.ok?`<button class="btn secondary" style="margin-top:6px;" onclick="showPoliticsShowdown()">🎭 召集队内摊牌（本赛季 1 次）<span class="eff-line">会让所有人当场知道你站哪边</span></button>`
+    :`<p class="info">队内摊牌：${showGate.reason||'现在还不到时候'}。</p>`;
+  return `<div class="card"><h3>🏛️ 更衣室政治</h3>
+    <p class="info">站得近的人会更愿意在场上帮你；站得远的人会在投票和传球时犹豫。</p>
     ${rows}
-    <p class="info">你的立场：${p2FactionName(p.politics.camp||'')} · 离队意愿 ${intent}（<span style="color:${il.color}">${il.label}</span>）</p>
-    ${btns}${bidBtn}${showdown}${leave}</div>`;
+    <p class="info">对首发的实际影响：<span style="color:${startColor};font-weight:700;">${startTxt}</span></p>
+    <p class="info">${t.camp?`你现在的立场：${t.camp==='neutral'?'不站队':p2FactionName(t.camp)}${t.campSince?`（第 ${Math.max(1,Math.floor((today-t.campSince)/7)+1)} 周）`:''}${t.campSwitch?` · 换过 ${t.campSwitch} 次`:''}`:'你还没有公开站队。站队是承诺，不是每天都能改的按钮。'}</p>
+  </div>
+  <div class="card"><h3>🤝 这周在更衣室</h3>
+    <p class="info">每两周可以选一次把时间花在哪；效果会持续四周，慢慢累积。</p>
+    ${bondHtml}${focusHtml}
+  </div>
+  <div class="card"><h3>📌 你的立场</h3>
+    ${standHtml}
+  </div>
+  <div class="card"><h3>⏳ 需要时机的大事</h3>
+    ${captainHtml}${showdownHtml}
+  </div>`;
+}
+function p2PoliticsBond(key){
+  const p=Game.player; if(!p) return showMain();
+  p2PoliticsEnsure(p); p2LockerEnsure(p);
+  const t=p.politics, today=daySerial(Game.date);
+  const gap=today-(Number(t.lastBondDay)||0);
+  if(gap<14){ showToast(`你在更衣室里刚花过时间，${14-gap} 天后再来`,'warning'); return showLockerRoom(); }
+  const L=p.locker;
+  const pickMate=pred=>L.people.filter(pred).sort((a,b)=>(Number(b.apps)||0)-(Number(a.apps)||0))[0]||L.people[0]||null;
+  let focusKey='', note='', mate=null;
+  if(key==='youngsters'){
+    mate=pickMate(x=>(Number(x.apps)||0)<80)||pickMate(()=>true);
+    p.factions.youngsters=clamp((Number(p.factions.youngsters)||0)+3,-20,20);
+    p.factions.veterans=clamp((Number(p.factions.veterans)||0)-1,-20,20);
+    if(mate) p2LockerBump(p,mate.name,2,'加练后的相处');
+    p.condition=p.condition||{}; p.condition.fitness=clamp((Number(p.condition.fitness)||60)-2,0,100);
+    focusKey='youngsters';
+    note=mate?`你留下来陪${mate.name}他们加练到天黑。`:'你留下来陪年轻队员加练到天黑。';
+  } else if(key==='veterans'){
+    mate=pickMate(x=>(Number(x.apps)||0)>=100)||pickMate(()=>true);
+    p.factions.veterans=clamp((Number(p.factions.veterans)||0)+3,-20,20);
+    p.factions.youngsters=clamp((Number(p.factions.youngsters)||0)-1,-20,20);
+    if(mate) p2LockerBump(p,mate.name,2,'饭桌上的相处');
+    focusKey='veterans';
+    note=mate?`你和${mate.name}这些老将坐到一桌。`:'你和老将们坐到一桌。';
+  } else if(key==='coach_loyal'){
+    p.factions.coach_loyal=clamp((Number(p.factions.coach_loyal)||0)+3,-20,20);
+    fxBump(p,'relationships.coach',2,50,0,100);
+    focusKey='coach_loyal';
+    note='你敲开教练办公室，一起过了一遍比赛录像。';
+  } else {
+    fxBump(p,'relationships.teammates.general',1,50,0,100);
+    note='这周你没有刻意靠拢谁，更衣室里也没人多想。';
+  }
+  t.lastBondDay=today;
+  t.focus=focusKey?{key:focusKey,untilDay:today+28}:null;
+  Game.log.unshift(`[${dateStr()}] 👥 ${note}${focusKey?'接下来四周，这个方向会继续积累。':''}`);
+  showToast(focusKey?`未来 4 周，${p2FactionName(focusKey)}会持续向你靠近`:'你和队友的关系更自然了','info');
+  saveGame(undefined,true);
+  showLockerRoom();
+}
+// R283：周漂移——把「养成」落到每周一次的小幅累积/消退，原因全部来自既有事实。
+function p2PoliticsWeeklyDrift(p){
+  if(!p) return null;
+  p2PoliticsEnsure(p);
+  if(p.retired||p.freeAgent) return null;
+  if(!(p.stats&&p.stats.club&&p.stats.club.name)) return null;
+  const t=p.politics;
+  const wk=p2PoliticsWeekKey();
+  if(t.driftWeek===wk) return t.lastDrift;
+  t.driftWeek=wk;
+  const today=daySerial(Game.date);
+  const deltas={veterans:0,youngsters:0,foreign:0,coach_loyal:0};
+  const notes=[];
+  const add=(key,n,text)=>{ if(!n) return; deltas[key]=(deltas[key]||0)+n; if(text) notes.push({key,text}); };
+  const season=p.stats.season||{};
+  const apps=Number(season.appearances)||0;
+  const prevApps=Number(t.lastApps)||0;
+  const played=apps>prevApps;
+  t.lastApps=apps;
+  const rank=Number(p.squadRank)||20;
+  const coach=Number(p.relationships&&p.relationships.coach)||50;
+  const age=Number(p.age)||20;
+  const everyOther=Math.floor(today/7)%2===0;
+  if(played){
+    P2_FACTION_META.forEach(m=>add(m.key,1,'你本周进入比赛并出场'));
+  } else if(rank<=14){
+    add('youngsters',1,'你这周没进比赛名单，年轻人更愿意和你说话');
+    add('coach_loyal',-1,'你这周没进比赛名单，教练组没再提你');
+  }
+  if(everyOther){
+    if(age<=21) add('youngsters',1,'你的年纪和年轻队员自然走得近');
+    else if(age>=30) add('veterans',1,'你的资历开始让老将把你当自己人');
+  }
+  let foreign=false;
+  try{ const cc=clubCountryOf((p.stats.club||{}).name); foreign=!!cc&&cc!==String(p.nation||''); }catch(e){}
+  if(foreign&&everyOther) add('foreign',1,'你是队里的外援，外援圈子自然接纳你');
+  if(rank<=8&&coach>=60&&everyOther) add('coach_loyal',1,'你稳坐首发，教练组把你当自己人');
+  const L=p.locker||{};
+  const talked=!!(L.lastTeamTalk&&L.lastTeamTalk===p2PoliticsTalkWeek());
+  if(talked) P2_FACTION_META.forEach(m=>add(m.key,1,'你本周对全队讲过话'));
+  const met=Array.isArray(L.meetings)&&L.meetings.length&&today-(Number(L.lastMeetingDay)||0)<=7;
+  if(met) P2_FACTION_META.forEach(m=>add(m.key,1,'你本周在队内会议上发了言'));
+  if(t.focus&&t.focus.key&&Number(t.focus.untilDay)>today) add(t.focus.key,1,`你这周把时间花在${p2FactionName(t.focus.key)}上`);
+  else if(t.focus) t.focus=null;
+  if(t.camp&&t.camp!=='neutral'&&t.campSince&&today-t.campSince>=14){
+    add(t.camp,1,`你已经站在${p2FactionName(t.camp)}这边${Math.max(2,Math.floor((today-t.campSince)/7))}周`);
+    if(everyOther) P2_FACTION_META.forEach(m=>{ if(m.key!==t.camp) add(m.key,-1,`你公开站在${p2FactionName(t.camp)}这边，另一边和你疏远`); });
+  }
+  const interacted=played||talked||met||(t.focus&&Number(t.focus.untilDay)>today);
+  t.idleWeeks=interacted?0:(Number(t.idleWeeks)||0)+1;
+  if(t.idleWeeks>=3) P2_FACTION_META.forEach(m=>{
+    const v=Number(p.factions[m.key])||0;
+    if(v) add(m.key,v>0?-1:1,'你很久没在更衣室里露面，关系在变淡');
+  });
+  P2_FACTION_META.forEach(m=>{
+    const dv=clamp(Number(deltas[m.key])||0,-2,2);
+    deltas[m.key]=dv;
+    if(dv) p.factions[m.key]=clamp((Number(p.factions[m.key])||0)+dv,-20,20);
+  });
+  const ld={weekKey:wk,deltas,notes};
+  t.lastDrift=ld;
+  t.history.push({weekKey:wk,deltas:Object.assign({},deltas),notes:notes.slice(0,4)});
+  if(t.history.length>8) t.history=t.history.slice(-8);
+  return ld;
 }
 function p2CaptainRival(p){
   p2LockerEnsure(p);
@@ -11705,7 +12059,7 @@ function showCaptainContest(){
   const sum=p2FactionSum(p);
   const tone=sum>=8?'更衣室里有不少人愿意听你说话。':sum<=-8?'更衣室对你并不友好，这一争可能会撕破脸。':'更衣室里没有明确的风向，谁先开口谁占先。';
   render(`<h2>🎖️ 队长之争</h2>
-    <div class="log"><p class="info">现任队长没有让位的意思。${rival.name}（${rival.apps||0}场·能力${rival.ov||60}）是更衣室里资历最老的声音。${tone}</p></div>
+    <div class="log"><p class="info">现任队长没有让位的意思。${rival.name}（${rival.apps||0}场·能力${ovr200From100(rival.ov||60)}）是更衣室里资历最老的声音。${tone}</p></div>
     <div class="card"><h3>怎么争</h3>
       <button class="btn secondary" style="display:block;width:100%;text-align:left;margin:6px 0;" onclick="p2CaptainContestRun('veterans')">先拜访老将，用资历换票<span class="eff-line">老将派 +，年轻派 −</span></button>
       <button class="btn secondary" style="display:block;width:100%;text-align:left;margin:6px 0;" onclick="p2CaptainContestRun('coach')">找主教练表态，让他站台<span class="eff-line">教练嫡系 +，教练信任 +3</span></button>
@@ -11768,11 +12122,26 @@ function p2CaptainContestRun(mode){
 }
 // ===================== R183：队内摊牌（每季 1 次） =====================
 // 教练与老将派正面冲突，玩家必须选边；结果只改已有的 p.factions / 教练信任 / 袖标，不新建数值。
-function p2PoliticsShowdownAvailable(p){
-  if(!p||p.retired||p.freeAgent) return false;
+// R283：摊牌需要时机——赛季进度、资格、真实分歧，缺一不可。
+function p2PoliticsShowdownGate(p){
+  if(!p) return {ok:false,reason:''};
   p2PoliticsEnsure(p);
-  if(!(p.stats&&p.stats.club&&p.stats.club.name)) return false;
-  return Number(p.politics.showdownYear||0)!==Number((Game.date&&Game.date.year)||0);
+  if(p.retired||p.freeAgent) return {ok:false,reason:'退役或自由身期间没有更衣室'};
+  if(!(p.stats&&p.stats.club&&p.stats.club.name)) return {ok:false,reason:'你还没有俱乐部'};
+  if(Number(p.politics.showdownYear||0)===Number((Game.date&&Game.date.year)||0)) return {ok:false,reason:'本赛季已经摊过牌，等赛季结束重新洗牌'};
+  const round=Number(Game.season&&Game.season.round)||0;
+  const rank=Number(p.squadRank)||20;
+  const age=Number(p.age)||0;
+  if(round<6&&!p.politics.camp) return {ok:false,reason:`赛季才踢了 ${round} 轮，更衣室还没到需要摊牌的时候`};
+  if(age<19) return {ok:false,reason:'你还太年轻，没人会在全队面前接你的话'};
+  if(rank>12) return {ok:false,reason:`你的顺位是第 ${rank}，还没资格把全队叫到录像室`};
+  const vals=P2_FACTION_META.map(m=>Number((p.factions||{})[m.key])||0);
+  const gap=Math.max.apply(null,vals)-Math.min.apply(null,vals);
+  if(gap<12&&!(p.locker&&p.locker.conflict)) return {ok:false,reason:'更衣室的分歧还不够大，没有人需要你当场选边'};
+  return {ok:true};
+}
+function p2PoliticsShowdownAvailable(p){
+  return !!p2PoliticsShowdownGate(p).ok;
 }
 function showPoliticsShowdown(){
   const p=Game.player; if(!p) return showMain();
@@ -12009,13 +12378,13 @@ function showPreMatchHub(){
   // R182：更衣室风向（只读 p.factions，不新建数值）
   const wind=p2FactionWind(p);
   const windColor=wind.sum>=8?'#34d399':wind.sum<=-8?'#f87171':'#fbbf24';
-  const windText=`${wind.label}（派系支持 ${wind.sum>0?'+':''}${wind.sum}）· ${wind.lowest.v<=-4?wind.lowest.name+'对你冷淡':wind.highest.name+'最挺你'}`;
+  const windText=`${wind.label} · ${wind.highest.name}${wind.highest.tier.label} · ${wind.lowest.v<=-4?wind.lowest.name+'对你不满':wind.lowest.name+wind.lowest.tier.label}`;
   // R188：赛前有机会被翻出 3 场内的旧话题
   p2EchoPrepare(p);
   render(`<h2>📋 赛前准备</h2>
     ${m.autoRitual?`<div class="card" style="border-left:4px solid #fbbf24;background:rgba(8,10,32,.55);">
-      <p style="margin:0;font-size:12px;color:#fbbf24;font-weight:800;">自动：跳过赛前仪式（锐利 −20）· 赛后径直回通道（压力 +2）</p>
-      <p style="margin:4px 0 0;font-size:11px;color:#94a3b8;">想要完整四段仪式与 +25 锐利，请退回比赛日点「🎬 完整赛前仪式」。</p>
+      <p style="margin:0;font-size:12px;color:#fbbf24;font-weight:800;">自动：跳过赛前仪式与入场流程，直接开球</p>
+      <p style="margin:4px 0 0;font-size:11px;color:#94a3b8;">自动准备不会领取入场、抵达、更衣室与热身的锐利加成。想要完整四段仪式，请退回比赛日点「🎬 完整赛前仪式」。</p>
     </div>`:''}
     <div class="card"><h3 style="margin-top:0;">${esc(m.opponent)} · 对手画像</h3>
       <p style="font-size:12px;color:#94a3b8;">${prof?('风格：'+esc(prof.name||prof.label||'均衡')+' · '+esc(prof.desc||'')):'常规对手，没有特别情报。'}</p>
@@ -12062,7 +12431,7 @@ function p2HubKickoff(){
   p2AutoMeal(m);
   m.entranceDone=true; m.arrivalDone=true;
   Game.log.unshift(`[${dateStr()}] 你在赛前准备卡上确认了布置，直接投入比赛。`);
-  Game.log.unshift(`[${dateStr()}] 自动准备：跳过赛前仪式（锐利 −20）；赛后径直回通道（压力 +2）。`);
+  Game.log.unshift(`[${dateStr()}] 自动准备：跳过赛前仪式与入场流程，直接开球。`);
   buildMatchScenes();
   matchLoop();
 }
@@ -12583,8 +12952,8 @@ function preMatchSpeech(){
   if(struggling) speechOpts.push({id:'encourage',label:`单独鼓励${struggling.name}："今天靠你了"`,eff:{morale:2},team:{morale:5,focus:3},target:p.npcWorld.mates.indexOf(struggling),req:{teamwork:10}});
   // R182：派系接线——最冷淡的派系可以用发言拉回，最挺你的派系可以把担子交出去
   const wind=p2FactionWind(p);
-  if(wind.lowest.v<=-4) speechOpts.push({id:'faction_'+wind.lowest.key,label:`先递话给${wind.lowest.name}："这场我需要你"`,eff:{morale:3,sharpness:2},team:{morale:4,focus:2},faction:wind.lowest.key,factionGain:4});
-  else if(wind.highest.v>=4) speechOpts.push({id:'faction_'+wind.highest.key,label:`把担子交给${wind.highest.name}："今天带我们走"`,eff:{morale:4},team:{morale:5,focus:2},faction:wind.highest.key,factionGain:2});
+  if(wind.lowest.v<=-4) speechOpts.push({id:'faction_'+wind.lowest.key,label:`先递话给${wind.lowest.name}（${wind.lowest.tier.label}）："这场我需要你"`,eff:{morale:3,sharpness:2},team:{morale:4,focus:2},faction:wind.lowest.key,factionGain:4});
+  else if(wind.highest.v>=4) speechOpts.push({id:'faction_'+wind.highest.key,label:`把担子交给${wind.highest.name}（${wind.highest.tier.label}）："今天带我们走"`,eff:{morale:4},team:{morale:5,focus:2},faction:wind.highest.key,factionGain:2});
   const available=speechOpts.filter(o=>!o.req||Object.entries(o.req).every(([k,v])=>(p.personality[k]||p.attrs[k]||0)>=v));
   const L=lockerTeam(p);
   const opts=available.map((o,i)=>`<button class="btn" style="display:block;width:100%;text-align:left;margin:5px 0;" onclick="preSpeech(${i})">${o.label}</button>`).join('');
@@ -12608,7 +12977,7 @@ function preSpeech(i){
     p.factions=p.factions||{};
     const gain=Number(o.factionGain)||2;
     p.factions[o.faction]=clamp((p.factions[o.faction]||0)+gain,-20,20);
-    Game.log.unshift(`[${dateStr()}] 🏛️ 你把话递给了${p2FactionName(o.faction)}，派系态度 +${gain}。`);
+    Game.log.unshift(`[${dateStr()}] 🏛️ 你把话递给了${p2FactionName(o.faction)}，他们对你的看法 +${gain}。`);
   }
   // 发言的战术效果会持续整场，而不是只在赛前结算一次
   if(m){
@@ -12914,7 +13283,7 @@ function halfTime(){
   const lu=buildLineup(p,m.formation||ensureTacticBook(p).formation);
   Game.halfBench=(lu.bench||[]).filter(b=>usedNames.indexOf(b.name)<0).slice(0,4);
   if(sr.used<sr.limit&&sr.windowsUsed<sr.windows&&Game.halfBench.length){
-    const sb=Game.halfBench.map((b,i)=>`<button class="btn secondary" style="display:block;width:100%;text-align:left;margin:4px 0;font-size:13px;" onclick="matchHalfSub(${i})">换上 ${b.name}<span style="color:#94a3b8;font-size:11px;"> · ${P2_SLOT_CN[b.group]||b.group} · 能力${b.ability}</span></button>`).join('');
+    const sb=Game.halfBench.map((b,i)=>`<button class="btn secondary" style="display:block;width:100%;text-align:left;margin:4px 0;font-size:13px;" onclick="matchHalfSub(${i})">换上 ${b.name}<span style="color:#94a3b8;font-size:11px;"> · ${P2_SLOT_CN[b.group]||b.group} · 能力${ovr200From100(b.ability)}</span></button>`).join('');
     subRow=`<div class="card"><h3>临场换人</h3>${sb}<p style="font-size:11px;color:#94a3b8;">每次换人消耗 1 个名额与 1 次窗口；换上的球员会直接改变下半场攻防修正。</p></div>`;
   } else {
     subRow=`<div class="card"><p class="info">换人不可用：${sr.used>=sr.limit?'名额已用完':'窗口已用完'}。</p></div>`;
@@ -14604,6 +14973,7 @@ function resolveTeammatePenalty(scene,taker){
   m.stats.shots++; if(success) m.stats.onTarget++;
   if(success){
     if(m.isHome) m.score.home++; else m.score.away++;
+    p2GoalLogAdd(m,m.isHome?'home':'away','team',scene.minute);
     if(!m.firstGoalMinute) m.firstGoalMinute=scene.minute;
     if(taker.mate){ taker.mate.goals=(taker.mate.goals||0)+1; }
     addHighlight(m,'goal',`第${scene.minute}分钟，${name}罚进点球，比分 ${m.score.home}-${m.score.away}`);
@@ -15184,6 +15554,7 @@ function resolveScene(i,forced,token){
     // 门将兜底：不记个人进球（门将不会出现在射门场景），但助攻必须正常入账
     const gkGoalGuard=p.position==='GK';
     if(option.goal){ if(m.isHome)m.score.home++;else m.score.away++; if(!m.firstGoalMinute) m.firstGoalMinute=m.minute;
+      p2GoalLogAdd(m,m.isHome?'home':'away',gkGoalGuard?'team':'player',m.minute);
       if(!gkGoalGuard){ m.playerGoals++;
         if(!m.isNational&&!m.friendly){ p.stats.season.goals++; p.stats.career.goals++;
           if(!option.noAssist){
@@ -15195,6 +15566,7 @@ function resolveScene(i,forced,token){
       }
       effects.goal=!gkGoalGuard; }
     else if(option.assist){ if(m.isHome)m.score.home++;else m.score.away++;
+      p2GoalLogAdd(m,m.isHome?'home':'away','assist',m.minute);
       m.playerAssists++;
       if(!m.isNational&&!m.friendly){ p.stats.season.assists++; p.stats.career.assists++;
         const mates=(p.npcWorld&&p.npcWorld.mates||[]).filter(x=>x.injuryWeeks<=0&&x.pos!=='门将');
@@ -15204,12 +15576,13 @@ function resolveScene(i,forced,token){
       effects.assist=true; }
     // 门将策动（兼容旧选项）：队友完成破门，比分记给球队，不计个人进球/助攻
     if(option.teamGoal){ if(m.isHome)m.score.home++;else m.score.away++; if(!m.firstGoalMinute) m.firstGoalMinute=m.minute;
+      p2GoalLogAdd(m,m.isHome?'home':'away','team',m.minute);
       addHighlight(m,'goal',`第${m.minute}分钟，你策动进攻，队友破门，比分 ${m.score.home}-${m.score.away}`);
       effects.teamGoal=true; }
     if(option.subbed){ effects.subbed=true; }
   } else {
     const failRisk=sceneFailRisk(sceneTypeCrowd,option);
-    if(option.concede||(failRisk>0&&Math.random()<failRisk)){ if(m.isHome)m.score.away++;else m.score.home++; effects.concede=true; }
+    if(option.concede||(failRisk>0&&Math.random()<failRisk)){ if(m.isHome)m.score.away++;else m.score.home++; p2GoalLogAdd(m,m.isHome?'away':'home','opp',m.minute); effects.concede=true; }
     if(option.penalty==='yellow'){
       // 第二张黄牌或战术犯规直红：红牌后立即离场，比赛剩余场景跳过
       if(m.yellowCards>=1&&Math.random()<0.35){
@@ -15442,6 +15815,7 @@ function acceptSubstitution(){
     const addOpp=goalsIn(Math.max(0,1.1-diff/24)*(left/90));
     if(m.isHome){ m.score.home+=addMy; m.score.away+=addOpp; }
     else { m.score.away+=addMy; m.score.home+=addOpp; }
+    if(addMy||addOpp){ p2GoalLogAdd(m,m.isHome?'home':'away','bulk',m.minute); p2GoalLogAdd(m,m.isHome?'away':'home','bulk',m.minute); }
     // 补算的进球同样要记进射门与射正，否则离开时的比分与统计会对不上
     if(addMy||addOpp){
       ensureMatchExtras(m);
@@ -15911,7 +16285,7 @@ function endMatch(){
     ${matchWhyCard(matchWhyData(m,p))}
     ${p2TimelineCard(m,rating)}
     ${tacticResult?tacticMatchCard(m,tacticResult):''}
-    ${m.voiceId?matchVoicesCard(m.voiceId):''}
+    ${m.voiceId&&Game.postMatchVoiceId!==m.voiceId?matchVoicesCard(m.voiceId):''}
     ${p2PostBox(won,rating)}`,'match:end');
   if(typeof p2FlowAfterResult==='function') p2FlowAfterResult(won,rating);
 }
@@ -16479,22 +16853,22 @@ function p2MomentGoal(m,p,assist){
   const home=!!m.isHome;
   if(assist){ m.playerAssists=(Number(m.playerAssists)||0)+1; m.momentAssists=(Number(m.momentAssists)||0)+1; return; }
   m.playerGoals=(Number(m.playerGoals)||0)+1; m.momentGoals=(Number(m.momentGoals)||0)+1;
-  if(m.score){ if(home) m.score.home=(Number(m.score.home)||0)+1; else m.score.away=(Number(m.score.away)||0)+1; }
+  if(m.score){ if(home) m.score.home=(Number(m.score.home)||0)+1; else m.score.away=(Number(m.score.away)||0)+1; p2GoalLogAdd(m,home?'home':'away','player',m.minute); }
 }
-function p2MomentScore(m,side,delta){ if(!m||!m.score) return; m.score[side]=Math.max(0,(Number(m.score[side])||0)+delta); }
+function p2MomentScore(m,side,delta,kind){ if(!m||!m.score||(side!=='home'&&side!=='away')) return; m.score[side]=Math.max(0,(Number(m.score[side])||0)+delta); p2GoalLogAdd(m,side,kind||(delta>0?'team':'prevent'),m.minute); }
 // Round 77：防守成功真的改比分——在对手已进球的情况下按其威胁强度抹掉一球
 function p2MomentPrevent(m,prob){
   const home=!!m.isHome, side=home?'away':'home';
   if((Number(m.score&&m.score[side])||0)>0&&Math.random()<prob){
-    p2MomentScore(m,side,-1); m.momentPrevented=(Number(m.momentPrevented)||0)+1;
+    p2MomentScore(m,side,-1,'prevent'); m.momentPrevented=(Number(m.momentPrevented)||0)+1;
   } else if((Number(m.score&&m.score[side])||0)<=0&&Math.random()<prob){
     // Round 78：0-0 时无球可抹，只记次数（这条路径成功只拿 0.06 评分）
     m.momentNoBall=(Number(m.momentNoBall)||0)+1;
   }
 }
 // 鼓动：10 分钟射门期望上浮折算成一次额外进球机会；失败则对手强度上浮
-function p2MomentTeamGoal(m,prob){ if(Math.random()<prob) p2MomentScore(m,m.isHome?'home':'away',1); }
-function p2MomentOppGoal(m,prob){ if(Math.random()<prob) p2MomentScore(m,m.isHome?'away':'home',1); }
+function p2MomentTeamGoal(m,prob){ if(Math.random()<prob) p2MomentScore(m,m.isHome?'home':'away',1,'team'); }
+function p2MomentOppGoal(m,prob){ if(Math.random()<prob) p2MomentScore(m,m.isHome?'away':'home',1,'opp'); }
 // Round 81：高压场判定——只读现有 fixture 标记，不新增存档字段
 function p2MomentPressure(m){
   if(!m) return null;
@@ -16702,6 +17076,12 @@ function buildTextLiveScript(m){
   for(let i=0;i<m.playerGoals&&i<own.length;i++) own[i].player=true;
   let assists=m.playerAssists;
   own.forEach(e=>{ if(!e.player&&assists>0){ e.assist=true; assists--; } });
+  // R286：文字直播的进球顺序就是本场展示出来的比分时间线，回写到 m.goalLog
+  {
+    let gh=0,ga=0;
+    m.goalLog=events.map(e=>{ if(e.side==='home')gh++; else ga++;
+      return {min:e.min,side:e.side,kind:e.player?'player':e.assist?'assist':(e.side===mySide?'team':'opp'),h:gh,a:ga}; });
+  }
   const grp=__posGroup(p.position);
   const goalHow=p.position==='GK'?['你冲进禁区参与角球，高高跃起头球破门','角球混战里你抢到落点，把球顶进网窝']
     :grp==='ATT'?['你在门前抢点，把球送进网窝','你反越位成功，单刀面对门将冷静推射','你在后点包抄，一脚垫射入网']
@@ -17789,7 +18169,7 @@ function eventTextFor(ev,p,seenCount){
   // R270：试训/球探事件把潜力档位与区间带进玩法文案，只给区间不给精确值
   if(ev&&ev.scoutEval){
     const b=potentialBandOf(p);
-    out+=' 场边球探在报告里写：这个孩子的上限大概在「'+b.label+'」档（评估区间 '+b.lo+'–'+b.hi+'，不是精确值）。';
+    out+=' 场边球探在报告里写：这个孩子的上限大概在「'+b.label+'」档（CA 评估区间 '+potentialRange200(b)+'，不是精确值）。';
   }
   return out;
 }
@@ -18109,7 +18489,7 @@ function transferFeeMultiplier(p){
   if(p&&p.transferListing) return TRANSFER_RULES.listed;
   return 1;
 }
-// 声望工资下限（Round 5）：身价会随年龄下滑，转会费按 fee*0.0008 折算周薪时，
+// 声望工资下限（Round 5）：转会费按 fee*0.0003 折算周薪时，
 // 33 岁以上的高声望球员会被压到 5,000/周，却仍按“传奇”档生活。工资下限让收入与声望同步，
 // 但仍受俱乐部工资上限 transferWageCap 约束，不会打破俱乐部购买力。
 function repWageFloor(rep){
@@ -18171,6 +18551,7 @@ function showContract(){
       <div class="stat-row"><span class="stat-label">市场价值</span><span class="stat-value">¥${(estimateMarketValue(p)/10000).toFixed(0)}万</span></div>
       <div class="stat-row"><span class="stat-label">董事会信任</span><span class="stat-value">${Math.round(board)}</span></div>
     </div>
+    ${typeof p2TransferMoodHtml==='function'?p2TransferMoodHtml(p):''}
     ${(p.renewalOffer&&p.renewalOffer.triggered)?`<div class="card"><h3>🖊️ 续约谈判已启动</h3>
       <p style="color:#fbbf24;">合同条款触发：${p.renewalOffer.triggered.type==='apps'?`出场 ${p.renewalOffer.triggered.value} 场（约定 ${p.renewalOffer.triggered.need} 场）`:'赛季奖项'}。俱乐部已经递上报价，你可以接受、议价或拒绝。</p>
       <div class="btn-grid"><button class="btn" onclick="showRenewalScene()">查看续约报价（接受 / 议价 / 拒绝）</button></div>
@@ -18244,7 +18625,7 @@ function setReleaseClause(){
     showToast('俱乐部拒绝设置解约金','danger');
     return showContract();
   }
-  c.releaseClause=Math.round(estimateMarketValue(p)*1.8/10000)*10000;
+  c.releaseClause=Math.round(estimateMarketValue(p)*1.35/10000)*10000;
   Game.log.unshift(`[${dateStr()}] 📌 合同中加入了解约金条款：¥${(c.releaseClause/10000).toFixed(0)}万。`);
   showToast('解约金条款已写入合同','success');
   showContract();
@@ -18320,7 +18701,7 @@ const RENEWAL_ASKS={
 };
 function renewalDifficulty(p,o){
   const board=(p.clubStory&&p.clubStory.boardTrust)||50;
-  const ov=calcOverall(p), rep=typeof p.reputation==='number'?p.reputation:50;
+  const ov=Math.round(calcOverallFloat(p)*5), rep=typeof p.reputation==='number'?p.reputation:50;
   const diff=Math.round(clamp(58-(ov-65)*1.2-(rep-50)*0.6-(board-50)*0.7+((o&&o.rounds)||0)*4,1,100));
   const label=diff<=35?'好说话':diff<=60?'正常':'强硬';
   return {diff,label};
@@ -18330,7 +18711,7 @@ function renewalAskPlan(p,o,kind){
   const askWage=Math.round((o.wage*ask.mul)/100)*100;
   const capChk=p2WageCapCheck(p.stats.club.name,p.stats.club.leagueKey,p.stats.club.level,p.weeklySalary,askWage);
   const board=(p.clubStory&&p.clubStory.boardTrust)||50;
-  const chance=clamp(0.48+(calcOverall(p)-65)*0.01+((p.reputation||50)-50)*0.004+(board-50)*0.004-((o.rounds||0)*0.1)+p2AgentDealBonus(p)+ask.adjust,0.15,0.85);
+  const chance=clamp(0.48+(calcOverallFloat(p)*5-65)*0.01+((p.reputation||50)-50)*0.004+(board-50)*0.004-((o.rounds||0)*0.1)+p2AgentDealBonus(p)+ask.adjust,0.15,0.85);
   return {kind,label:ask.label,mul:ask.mul,askWage,capOk:!!capChk.ok,capReason:capChk.reason||'',pct:Math.round(chance*100)};
 }
 function renewalRoll(p,o,kind){
@@ -18622,9 +19003,13 @@ function triggerTransfer(fromContract){
       const c=pick(eligible);
       // 身价是锚点：挂牌 0.90×、申请转会 0.85×，截止日再给 15% 溢价。
       // 随机浮动收窄到 0.95–1.18，避免同一身价在同一周出现 0.8× 与 1.3× 的极端报价。
-      const fee=Math.round(estimateMarketValue(p)*transferFeeMultiplier(p)*transferDeadlineFeeMult(Game.date)*randFloat(0.95,1.18)*(1+tm.fee));
+      let fee=Math.round(estimateMarketValue(p)*transferFeeMultiplier(p)*transferDeadlineFeeMult(Game.date)*randFloat(0.95,1.18)*(1+tm.fee));
+      // R287 C3：买方预算闸门——报价不得超过买方可用额度的 55%，超出则压到上限；压不到 50 万就不出价。
+      const room=p2TransferBudgetRoom(c.name,lk,c.rep,Game.date.year);
+      if(room<500000) return;
+      if(fee>room) fee=Math.max(500000,Math.floor(room/10000)*10000);
       const wageCap=transferWageCap(c,lk);
-      const rawWage=Math.max(2000,repWageFloor(p.reputation),transferWageTarget(p,wageCap),Math.round(fee*0.0008/100)*100);
+      const rawWage=Math.max(2000,repWageFloor(p.reputation),transferWageTarget(p,wageCap),Math.round(fee*0.0003/100)*100);
       const wage=Math.min(Math.round(rawWage*(deadline?1+TRANSFER_RULES.deadlineWage:1)/100)*100,wageCap);
       const years=p.age<=23?5:p.age<=28?4:p.age<=31?3:2;
       const loan=p.age<=21&&c.rep>(p.stats.club.level||60)+8&&Math.random()<0.35;
@@ -18669,9 +19054,12 @@ function triggerTransfer(fromContract){
     if(pool.length){
       const hit=pool.sort((a,b)=>b.c.rep-a.c.rep)[Math.floor(Math.random()*Math.min(6,pool.length))];
       const c=hit.c, lk=hit.lk;
-      const fee=Math.round(estimateMarketValue(p)*transferFeeMultiplier(p)*transferDeadlineFeeMult(Game.date)*randFloat(0.98,1.15));
+      let fee=Math.round(estimateMarketValue(p)*transferFeeMultiplier(p)*transferDeadlineFeeMult(Game.date)*randFloat(0.98,1.15));
+      const room=p2TransferBudgetRoom(c.name,lk,c.rep,Game.date.year);
+      if(room<500000) return;
+      if(fee>room) fee=Math.max(500000,Math.floor(room/10000)*10000);
       const wageCap=transferWageCap(c,lk);
-      const wage=Math.min(Math.round(Math.max(2000,repWageFloor(p.reputation),transferWageTarget(p,wageCap),Math.round(fee*0.0008/100)*100)*1.05/100)*100,wageCap);
+      const wage=Math.min(Math.round(Math.max(2000,repWageFloor(p.reputation),transferWageTarget(p,wageCap),Math.round(fee*0.0003/100)*100)*1.05/100)*100,wageCap);
       const years=p.age<=23?5:p.age<=28?4:p.age<=31?3:2;
       topOffers.push({club:c,fee,wage,years,loan:false,buyOption:null,
         signingBonus:Math.round(fee*randFloat(0.04,0.09)/1000)*1000,
@@ -18950,7 +19338,7 @@ function openTransferOffer(i){
       ${o.final?`<div class="stat-row"><span class="stat-label">窗口剩余</span><span class="stat-value" style="color:#f87171;">${o.windowDays||transferWindowDaysLeft(Game.date)} 天 · 最后报价，窗口一关就失效</span></div>`:''}
       ${bestRival&&bestRival.wage>(o.wage||0)?`<button class="btn secondary" onclick="matchRivalOffer(${i})">🔥 让${o.club.name}匹配${bestRival.club.name}的周薪（¥${bestRival.wage.toLocaleString()}）</button>`:''}
       ${rivalCount>0?`<div class="stat-row"><span class="stat-label">竞价对手</span><span class="stat-value">${rivalCount} 家</span></div>`:''}
-      <p style="color:#94a3b8;font-size:12px;">经纪人：${agent.name}（能力${agent.quality}，佣金${Math.round((agent.commission||0.1)*100)}%）｜对方耐心：${patience}${o.deadline?' <span style="color:#f97316;">· 截止日报价（含溢价，耐心更少）</span>':''}</p>
+      <p style="color:#94a3b8;font-size:12px;">经纪人：${agent.name}（业务能力${agent.quality}，佣金${Math.round((agent.commission||0.1)*100)}%）｜对方耐心：${patience}${o.deadline?' <span style="color:#f97316;">· 截止日报价（含溢价，耐心更少）</span>':''}</p>
       <p style="color:#94a3b8;font-size:12px;">当前周薪 ¥${p.weeklySalary.toLocaleString()}｜对方工资上限 ¥${(o.wageCap||transferWageCap(o.club,o.club.leagueKey)).toLocaleString()}</p>
       <button class="btn" onclick="acceptTransfer(${i})">✅ 接受报价</button>
       <button class="btn secondary" onclick="agentLeakTransfer(${i})" ${o.leaked?'disabled':''}>📰 让经纪人放风</button>
@@ -19044,6 +19432,7 @@ function acceptTransfer(i){
   const p=Game.player;
   const offer=(Game.transferOffers||[])[i];
   if(!offer) return;
+  const oldClub=(p.stats&&p.stats.club&&p.stats.club.name)||'';
   // R116：谈判破裂后冷却期内禁止从“直接接受报价”绕过后果
   if(p2NegClubBlocked(p,offer.club.name)){
     showToast('与这家俱乐部的谈判已破裂，冷却期内无法完成转会','warning');
@@ -19060,8 +19449,9 @@ function acceptTransfer(i){
   const signWage=Math.min(terms.wageRaw, transferWageCap(offer.club,leagueKey));
   // Round 42：下家预算判断——单季净支出不得超过预算余额；worldFeeCap 只管单笔上限，两者不叠加
   let buyerFin=null; try{ buyerFin=p2ClubFinance(offer.club.name,leagueKey,offer.club.rep); }catch(e){ buyerFin=null; }
-  if(buyerFin&&!offer.loan&&signFee>buyerFin.budget){
-    Game.log.unshift(`[${dateStr()}] 💸 ${offer.club.name}预算不足（余额¥${(buyerFin.budget/10000).toFixed(0)}万 < 转会费¥${(signFee/10000).toFixed(0)}万），转会无法完成。`);
+  const buyerRoom=offer.loan?Infinity:p2TransferBudgetRoom(offer.club.name,leagueKey,offer.club.rep,Game.date.year);
+  if(!offer.loan&&signFee>buyerRoom){
+    Game.log.unshift(`[${dateStr()}] 💸 ${offer.club.name}预算不足（可用¥${(buyerRoom/10000).toFixed(0)}万 < 转会费¥${(signFee/10000).toFixed(0)}万），转会无法完成。`);
     showToast('下家预算不足，转会取消','danger');
     return showMain();
   }
@@ -19120,6 +19510,27 @@ function acceptTransfer(i){
   Game.log.unshift(offer.loan
     ?`[${dateStr()}] 🔁 你租借加盟${offer.club.name}，租期一年，周薪¥${offer.wage.toLocaleString()}。`
     :`[${dateStr()}] 🎉 你转会至${offer.club.name}！转会费¥${(signFee/10000).toFixed(1)}万，周薪¥${signWage.toLocaleString()}，合同${signYears}年，签字费¥${(signBonus||0).toLocaleString()}。`);
+  // R287 C4：玩家自己的转会也进入世界账本与新闻，避免“玩家 5000 万转会，世界毫无反应”。
+  if(!offer.loan && signFee>0 && oldClub && oldClub!==offer.club.name){
+    if(p.world){
+      if(!p.world.squadMeta) p.world.squadMeta={tx:[],sold:0};
+      if(!Array.isArray(p.world.squadMeta.tx)) p.world.squadMeta.tx=[];
+      const txId=['player',Game.date.year,oldClub,offer.club.name,p.name,Number(signFee)||0].join('|');
+      if(!p.world.squadMeta.tx.some(x=>x&&x.id===txId)){
+        p.world.squadMeta.tx.unshift({y:Game.date.year,from:oldClub,to:offer.club.name,n:p.name,
+          pos:p.position||'ST',fee:Number(signFee)||0,cap:worldFeeCap(leagueKey),id:txId});
+        if(p.world.squadMeta.tx.length>120) p.world.squadMeta.tx.length=120;
+      }
+      if(!Array.isArray(p.world.news)) p.world.news=[];
+      p.world.news.unshift({day:dateStr(),type:'转会',club:offer.club.name,
+        text:`${p.name}从${oldClub}转会加盟${offer.club.name}，转会费${worldFeeText(signFee)}。`});
+      if(p.world.news.length>60) p.world.news.length=60;
+    }
+    Game.worldMarketLog=Game.worldMarketLog||[];
+    Game.worldMarketLog.unshift({day:dateStr(),year:Game.date.year,player:p.name,from:oldClub,
+      to:offer.club.name,fee:Number(signFee)||0,type:'transfer'});
+    if(Game.worldMarketLog.length>120) Game.worldMarketLog.length=120;
+  }
   Game.log.unshift(`[${dateStr()}] 🆕 新援适应期：教练信任从 50 重新开始，队内顺位先按新环境评估；训练和出场表现会决定你多快站稳（窗口 ${Math.round(NEW_SIGNING_DAYS/7)} 周）。`);
   showToast(offer.loan?`租借加盟${offer.club.name}！`:`加盟${offer.club.name}！`,'success');
   saveGame();
@@ -20187,6 +20598,7 @@ function cupMatchScoreAB(bm,m,my){
 function cupAddExtraTime(m,myHome,etMy){
   m.score.home+=myHome?etMy[0]:etMy[1];
   m.score.away+=myHome?etMy[1]:etMy[0];
+  if(etMy[0]||etMy[1]){ p2GoalLogAdd(m,'home','bulk_et',m.minute); p2GoalLogAdd(m,'away','bulk_et',m.minute); }
   m.extraTime=etMy;
 }
 function finishCupMatch(m){
@@ -23598,7 +24010,7 @@ const STORY_STAGES=[
 ];
 function p2StoryStageOf(p){
   if(!p) return 'youth';
-  const age=Number(p.age)||18, ovr=Number(p.__ovr)||calcOverall(p);
+  const age=Number(p.age)||18, ovr=Number(p.__ovr)||Math.round(calcOverallFloat(p)*5);
   const cl=(p.stats&&p.stats.club)||{}, lv=Number(cl.level)||50;
   const apps=(p.stats&&p.stats.season&&p.stats.season.appearances)||0;
   const total=(Game.season&&Game.season.rounds&&Game.season.rounds.length)||38;
@@ -24442,12 +24854,17 @@ function p2StoryChooseUI(id,opt){
     const why=p2StoryReasonText(res);
     try{ Game.log.unshift(`[${dateStr()}] 🎭 剧情未推进：${why}`); }catch(e){/*静默:日志*/}
     try{ showToast('剧情未推进：'+why,'warning'); }catch(e){/*静默:界面*/}
-    showMain();
+    // R282：从剧情页点选项时条件若已失效，留在剧情页说明原因，不把玩家甩回主界面
+    if(typeof __renderView!=='undefined'&&__renderView==='story:scene'&&typeof p2ShowStoryScene==='function') p2ShowStoryScene(id);
+    else showMain();
     return res;
   }
   const next=res.finished
     ? '这条线到此收束。'
     : (L&&S?`已推进到下一拍「${esc((p2StoryBeat(L,S)||{}).title||'')}」`:'已推进到下一拍。');
+  // R286：选择已落盘，结果页是临时确认页；清掉恢复标记，刷新结果页回主界面而不是重进剧情
+  try{ sessionStorage.removeItem('lv_story_scene'); }catch(e){/*静默:存储*/}
+  Game.screen='main';
   render(`<h2>🎭 ${esc(L?L.name:'剧情线')}</h2>
     <div class="card">
       <div class="card-head"><h3>${esc(res.beatTitle||'剧情推进')}</h3><span class="card-date">你的选择</span></div>
@@ -24468,6 +24885,8 @@ function p2StoryIgnoreUI(id){
     return null;
   }
   const txt=res.dropped?'连续两次没有回应，这条线已经中断。':`关系降到 ${Math.round(res.rel)}，下一次推进推迟。`;
+  try{ sessionStorage.removeItem('lv_story_scene'); }catch(e){/*静默:存储*/}
+  Game.screen='main';
   try{ showToast('已暂不理会'+(L?`「${L.name}」`:''),'warning'); }catch(e){/*静默:界面*/}
   render(`<h2>🎭 ${esc(L?L.name:'剧情线')}</h2>
     <div class="card"><h3>暂不理会</h3>
@@ -24660,35 +25079,95 @@ function p2StoryCardHtml(p){
   }
   const active=STORY_LINES.filter(L=>{ const x=s.lines[L.id]; return x&&x.status==='active'; });
   if(!active.length) return h;
+  const rows=p2StoryReadyRows(p);
+  const ready=rows.filter(r=>r.gate.ok), waiting=rows.filter(r=>!r.gate.ok);
   h+=`<div class="card" style="border-color:rgba(34,211,238,.45);"><div class="card-head"><h3>🎭 剧情线</h3><span class="card-date">${active.length}/${P2_STORY_ACTIVE_CAP} 活跃</span></div>`;
-  // R280：剧情卡顶部固定一条真实面板，读者能立刻核对剧情里的数字和存档是否一致
-  const _sea=textFactSeason(p), _rk=textFactRank(p), _form=Number(p.currentForm)||0;
-  const _inj=(p.injury&&String(p.injury.name||p.injury.type||'伤停'))||'健康';
-  h+=`<div style="font-size:11px;color:#94a3b8;background:rgba(148,163,184,.08);border:1px solid rgba(148,163,184,.18);border-radius:8px;padding:6px 8px;margin:2px 0 4px;">📊 当前面板：本季 ${_sea.apps} 场 ${_sea.goals} 球 ${_sea.assists} 助 · 评分 ${_form?_form.toFixed(1):'—'} · 联赛 ${_rk?'第'+_rk:'—'} · 年龄 ${Number(p.age)||'—'} · 状态 ${esc(_inj)}</div>`;
-  for(const L of active){
-    const S=s.lines[L.id]; const beat=p2StoryBeat(L,S); if(!beat) continue;
-    // R118：选项是否可推进由真实拦截条件决定（冷却/本季额度/单线额度），不再只按冷却判断；
-    // 即使不可用也保持可点击，点击后明确说明原因，避免“点了没反应”。
-    const gate=p2StoryGate(p,L.id);
-    const need=L.minGap||8, gap=p2StoryWeeksSince(S.lastFired);
-    const statStr=(L.type==='family')
-      ? `亲情 ${Math.round(typeof S.bond==='number'?S.bond:50)} · 压力 ${Math.round(p.condition.stress)} · 士气 ${Math.round(p.condition.morale)} · 媒体 ${s.media>=0?'+':''}${s.media}`
-      : `关系 ${Math.round(S.rel)}`;
-    const gateTxt=gate.ok?'':p2StoryReasonText(gate);
-    h+=`<div style="padding:10px 0;border-top:1px solid rgba(255,255,255,.12);">
-      <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;">
-        <strong style="color:#fbbf24;">${esc(L.name)} · ${esc(beat.title)}</strong>
-        <span style="font-size:11px;color:${gate.ok?'#94a3b8':'#fbbf24'};">${statStr}${gate.ok?` · 还差 ${Math.max(0,need-gap)} 周冷却`:` · ${gateTxt}`}</span></div>
-      ${p2StoryParaHtml(p2StoryBeatText(beat,p,S))}
-      ${beat.choices.map((c,i)=>{ const b=(c.eff&&c.eff.bond)?` <b style="color:${c.eff.bond>0?'#4ade80':'#fb7185'};">亲情${c.eff.bond>0?'+':''}${c.eff.bond}</b>`:'';
-        const chip=p2StoryEffChips(c.eff);
-        return `<button class="btn secondary" style="margin:3px 6px 3px 0;padding:8px 12px;font-size:12px;text-align:left;${gate.ok?'':'opacity:.6;'}" onclick="p2StoryChooseUI('${L.id}',${i})">${esc(c.label)}${b}${chip}</button>`; }).join('')}
-      <button class="btn secondary" style="margin:3px 0;padding:8px 12px;font-size:12px;opacity:.75;" onclick="p2StoryIgnoreUI('${L.id}')">暂不理会（关系 -6）</button>
-      ${gate.ok?'':`<p style="font-size:11px;color:#fbbf24;margin:2px 0 0;">选项暂不可用：${esc(gateTxt)}（点选项会说明原因）</p>`}
-    </div>`;
-  }
+  // R282：主界面只放入口，不铺剧情正文。条件满足的线给出「进入剧情」，其余只报冷却/额度。
+  if(ready.length) h+=ready.map(r=>p2StoryEntryRow(r)).join('');
+  if(waiting.length) h+=waiting.map(r=>`<div style="padding:7px 0;border-top:1px solid rgba(255,255,255,.08);display:flex;justify-content:space-between;gap:8px;">
+      <span style="font-size:12px;color:#a9b4d6;">${esc(r.L.name)}</span>
+      <span style="font-size:11px;color:#fbbf24;">${esc(p2StoryReasonText(r.gate))}</span></div>`).join('');
+  if(!ready.length) h+=`<p style="font-size:11px;color:#94a3b8;margin:4px 0 0;">暂时没有可推进的剧情；条件满足后会在这里出现「进入剧情」入口，正文只在剧情页展开。</p>`;
   h+=`<div style="font-size:11px;color:#94a3b8;margin-top:4px;">剧情计入：触发 ${s.fired} · 完成 ${s.completed} · 中断 ${s.interrupted||0} · 错过 ${s.ignored} · 媒体 ${s.media>=0?'+':''}${s.media}</div></div>`;
   return h;
+}
+// R282：剧情入口与阅读分离——主界面只拿待处理状态，正文与选项只在剧情页出现。
+function p2StoryPanelHtml(p){
+  // R280：固定真实面板，读者能立刻核对剧情里的数字和存档是否一致
+  const _sea=textFactSeason(p), _rk=textFactRank(p), _form=Number(p.currentForm)||0;
+  const _inj=(p.injury&&String(p.injury.name||p.injury.type||'伤停'))||'健康';
+  return `<div style="font-size:11px;color:#94a3b8;background:rgba(148,163,184,.08);border:1px solid rgba(148,163,184,.18);border-radius:8px;padding:6px 8px;margin:2px 0 6px;">📊 当前面板：本季 ${_sea.apps} 场 ${_sea.goals} 球 ${_sea.assists} 助 · 评分 ${_form?_form.toFixed(1):'—'} · 联赛 ${_rk?'第'+_rk:'—'} · 年龄 ${Number(p.age)||'—'} · 状态 ${esc(_inj)}</div>`;
+}
+function p2StoryStatStr(p,s,L,S){
+  return (L.type==='family')
+    ? `亲情 ${Math.round(typeof S.bond==='number'?S.bond:50)} · 压力 ${Math.round(p.condition.stress)} · 士气 ${Math.round(p.condition.morale)} · 媒体 ${s.media>=0?'+':''}${s.media}`
+    : `关系 ${Math.round(S.rel)}`;
+}
+function p2StoryReadyRows(p){
+  const s=p2StoryEnsure(p); const out=[];
+  STORY_LINES.forEach(L=>{
+    const S=s.lines[L.id]; if(!S||S.status!=='active') return;
+    const beat=p2StoryBeat(L,S); if(!beat) return;
+    let gate; try{ gate=p2StoryGate(p,L.id); }catch(e){ gate={ok:false,reason:'beat'}; }
+    out.push({L,S,beat,gate,statStr:p2StoryStatStr(p,s,L,S)});
+  });
+  return out;
+}
+function p2StoryEntryRow(r){
+  const total=(r.L.beats||[]).length, idx=(r.L.beats||[]).indexOf(r.beat)+1;
+  return `<div style="padding:9px 0;border-top:1px solid rgba(255,255,255,.12);display:flex;justify-content:space-between;gap:10px;align-items:center;">
+    <div style="min-width:0;">
+      <strong style="color:#fbbf24;">🎬 待处理 · ${esc(r.L.name)}</strong>
+      <div style="font-size:11px;color:#94a3b8;margin-top:2px;">「${esc(r.beat.title||'剧情')}」${idx>0?` · 第 ${idx}/${total} 拍`:''} · ${r.statStr}</div>
+    </div>
+    <button class="btn secondary" style="flex:0 0 auto;padding:7px 12px;font-size:12px;" onclick="p2ShowStoryScene('${r.L.id}')">进入剧情 ›</button>
+  </div>`;
+}
+// 首屏待办提示：只有真正可推进的线才出现在这里
+function p2StoryPendingCard(p){
+  if(!p) return '';
+  let rows=[]; try{ rows=p2StoryReadyRows(p).filter(r=>r.gate.ok); }catch(e){ rows=[]; }
+  if(!rows.length) return '';
+  return `<div class="card" style="border-color:rgba(251,191,36,.55);background:rgba(251,191,36,.06);">
+    <div class="card-head"><h3>🎭 待处理剧情 · ${rows.length} 条</h3><span class="card-date">等你选择</span></div>
+    ${rows.map(r=>p2StoryEntryRow(r)).join('')}
+  </div>`;
+}
+// 剧情页：先读本拍正文与真实面板，再做选择；选择结果由 p2StoryChooseUI 单独成页
+function p2StorySceneHtml(id){
+  const p=Game.player; if(!p) return '';
+  const s=p2StoryEnsure(p), L=STORY_LINES.find(x=>x.id===id), S=s.lines[id];
+  if(!L||!S||S.status!=='active') return '';
+  const beat=p2StoryBeat(L,S); if(!beat) return '';
+  const gate=p2StoryGate(p,id), statStr=p2StoryStatStr(p,s,L,S);
+  const total=(L.beats||[]).length, idx=(L.beats||[]).indexOf(beat)+1;
+  const choices=(beat.choices||[]).map((c,i)=>{
+    const b=(c.eff&&c.eff.bond)?` <b style="color:${c.eff.bond>0?'#4ade80':'#fb7185'};">亲情${c.eff.bond>0?'+':''}${c.eff.bond}</b>`:'';
+    const chip=p2StoryEffChips(c.eff);
+    return `<button class="btn secondary" style="margin:3px 6px 3px 0;padding:9px 12px;font-size:13px;text-align:left;${gate.ok?'':'opacity:.55;'}" onclick="p2StoryChooseUI('${L.id}',${i})">${esc(c.label)}${b}${chip}</button>`;
+  }).join('');
+  return `<h2>🎭 ${esc(L.name)}</h2>
+    <div class="card" style="border-color:rgba(34,211,238,.45);">
+      <div class="card-head"><h3>${esc(beat.title||'剧情')}</h3><span class="card-date">${idx>0?`第 ${idx}/${total} 拍`:'进行中'}</span></div>
+      ${p2StoryPanelHtml(p)}
+      ${p2StoryParaHtml(p2StoryBeatText(beat,p,S))}
+      <p class="info" style="font-size:12px;">${statStr}${gate.ok?' · 条件已满足':' · '+esc(p2StoryReasonText(gate))}</p>
+      <div style="margin-top:6px;">${choices}</div>
+      <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn secondary" style="padding:8px 12px;font-size:12px;opacity:.75;" onclick="p2StoryIgnoreUI('${L.id}')">暂不理会（关系 -6）</button>
+        <button class="btn" style="padding:8px 12px;font-size:12px;" onclick="showMain()">返回（先不选择）</button>
+      </div>
+      ${gate.ok?'':`<p style="font-size:11px;color:#fbbf24;margin:6px 0 0;">选项暂不可用：${esc(p2StoryReasonText(gate))}</p>`}
+    </div>`;
+}
+function p2ShowStoryScene(id){
+  const h=p2StorySceneHtml(id);
+  if(!h){ try{ showToast('这条剧情线当前无法进入','warning'); }catch(e){/*静默:界面*/} return showMain(); }
+  // R286：剧情页需要独立屏态，刷新兜底（resumeAfterReload）靠它判断是否已经接管页面
+  Game.screen='story:scene';
+  render(h,'story:scene');
+  // R286：记住当前剧情页（只在本次标签页有效），刷新后能回到同一拍，而不是被丢回主界面
+  try{ sessionStorage.setItem('lv_story_scene',String(id)); }catch(e){/*静默:存储*/}
 }
 // 同一份伤病只允许结算一次：已定方案（提前复出/保守/正常/带伤出场）后只能查看
 function p2InjurySettled(inj){
@@ -25235,7 +25714,7 @@ function trainingLoadCard(p){
     <p style="color:#94a3b8;font-size:12px;">已练 ${L.sessions} 次${L.injuries?`，本周训练受伤 ${L.injuries} 次`:''}。${st.desc}</p>
     <div class="stat-row"><span class="stat-label">训练效率（教练+设施）</span><span class="stat-value">${Math.round(trainingEnvMod(p)*100)}%</span></div>
     <div class="stat-row"><span class="stat-label">天赋成长余量</span><span class="stat-value">${potLeft.dots} ${potLeft.label}</span></div>
-    <div class="stat-row"><span class="stat-label">球探档位</span><span class="stat-value">${potBand.label}<small style="color:#94a3b8;">（${potBand.lo}–${potBand.hi}）</small></span></div>
+    <div class="stat-row"><span class="stat-label">球探档位</span><span class="stat-value">${potBand.label}<small style="color:#94a3b8;">（CA ${potentialRange200(potBand)}）</small></span></div>
     <p style="color:#94a3b8;font-size:12px;margin:4px 0 0;">${potLeft.note}</p>
     <div class="stat-row"><span class="stat-label">本周预计属性成长</span><span class="stat-value">${fc.count?`+${fc.gainLo}~${fc.gainHi}（剩余${fc.count}次）`:'暂无剩余计划训练'}</span></div>
     <div class="stat-row"><span class="stat-label">本周预计训练受伤</span><span class="stat-value" style="color:${fc.injuryHi>=15?'#f87171':'#94a3b8'};">${fc.count?`${fc.injuryLo}%~${fc.injuryHi}%`:'—'}</span></div>
@@ -26537,7 +27016,9 @@ function visionLayout(){
 function startVisionGame(){
   const p=Game.player;
   if(!miniGameReady(p,25)) return;
-  Game.visionGame={round:1,total:4,results:[],locked:false,interval:null,layout:null};
+  p2LockerEnsure(p);
+  const mates=((p.locker&&p.locker.people)||[]).slice(0,6).map(x=>({name:x.name,rel:Number(x.rel)||0}));
+  Game.visionGame={round:1,total:4,results:[],locked:false,interval:null,layout:null,mates,bonded:[],lastMate:'',lastMateCold:false};
   showVisionRound();
 }
 function showVisionRound(){
@@ -26547,7 +27028,7 @@ function showVisionRound(){
   g.layout=layout;
   const maxTime=clamp(4.6-(g.round-1)*0.65,2.2,4.6);
   g.maxTime=maxTime; g.time=maxTime; g.locked=false;
-  const dots=layout.spots.map((s,i)=>`<button class="vision-dot" style="left:${s.x}%;top:${s.y}%;" onclick="visionPick(${i})">队友${i+1}</button>`).join('');
+  const dots=layout.spots.map((s,i)=>{const m=(g.mates||[])[i];return `<button class="vision-dot" style="left:${s.x}%;top:${s.y}%;" onclick="visionPick(${i})">${esc(m?m.name:'队友'+(i+1))}</button>`;}).join('');
   const defs=layout.defs.map(d=>`<div class="vision-dot def" style="left:${d.x}%;top:${d.y}%;">后卫</div>`).join('');
   render(`<h2>👁️ 传球视野 · 第${g.round}/${g.total}轮</h2>
     ${artBanner('vision','compact')}
@@ -26575,6 +27056,17 @@ function visionPick(i){
   g.locked=true; clearInterval(g.interval); g.interval=null;
   const ok=i===g.layout.openIdx;
   g.results.push(ok); g.round++;
+  // R283：传球选择回响——传给关系好的队友，默契真的会涨。
+  const p=Game.player, mate=(g.mates||[])[i];
+  g.lastMate=''; g.lastMateCold=false;
+  if(ok&&p&&mate){
+    if(mate.rel>=30){
+      const d=p2LockerBump(p,mate.name,1,'传球视野：你总能找到他')||1;
+      mate.rel+=d; g.lastMate=mate.name; g.bonded=(g.bonded||[]).concat([mate.name]);
+    } else if(mate.rel<-20){
+      g.lastMate=mate.name; g.lastMateCold=true;
+    }
+  }
   showVisionResult(i);
 }
 function showVisionResult(i){
@@ -26582,9 +27074,13 @@ function showVisionResult(i){
   const ok=i>=0&&i===g.layout.openIdx;
   const timeout=i===-1;
   const open=g.layout?g.layout.openIdx:-1;
+  const mate=(g.mates||[])[i]||null;
+  const mateLine=(ok&&mate&&(g.lastMate===mate.name||g.lastMateCold))
+    ? `<p style="color:${g.lastMateCold?'#fb923c':'#94a3b8'};font-size:12px;">${g.lastMateCold?`${esc(mate.name)}接球时犹豫了半拍——你们之间还缺点默契。`:`${esc(mate.name)}接球很顺，他和你越来越有默契。`}</p>`:'';
+  g.lastMateCold=false;
   render(`<h2>👁️ 传球视野 · 第${g.round-1}/${g.total}轮</h2>
     ${artBanner('vision','compact')}
-    <div class="card" style="text-align:center;"><div style="font-size:38px;">${ok?'✅':'❌'}</div><h3 style="color:${ok?'#34d399':'#f87171'};">${ok?'找到空当！':timeout?'犹豫被断！':'传给了被盯防的人！'}</h3><p>${ok?`你一抬头就看到了队友${open+1}，球准确地送了过去。`:`空当其实是队友${open+1}，${timeout?'你抬头太慢，防守已经补位。':'你的传球被后卫截下。'}`}</p></div>
+    <div class="card" style="text-align:center;"><div style="font-size:38px;">${ok?'✅':'❌'}</div><h3 style="color:${ok?'#34d399':'#f87171'};">${ok?'找到空当！':timeout?'犹豫被断！':'传给了被盯防的人！'}</h3><p>${ok?`你一抬头就看到了${esc(mate?mate.name:'队友'+(open+1))}，球准确地送了过去。`:`空当其实是${esc(((g.mates||[])[open]||{}).name||('队友'+(open+1)))}，${timeout?'你抬头太慢，防守已经补位。':'你的传球被后卫截下。'}`}</p>${mateLine}</div>
     <button class="btn" onclick="showVisionRound()">${g.round>g.total?'查看结果':'下一轮'}</button>`);
 }
 function finishVisionGame(){
@@ -26595,10 +27091,11 @@ function finishVisionGame(){
   const coach=hits>=4?4:hits>=2?2:0;
   miniGameSettle(p,['vision','decisions','passing'],gain,coach,6,`传球视野：${hits}/4次找到空当，视野、决断、传球+${gain.toFixed(2)}，教练信任+${coach}。`);
   fxBump(p,'condition.mood',(hits>=3?4:1),60,0,100);
+  const bonded=(g.bonded||[]).filter((v,i,a)=>a.indexOf(v)===i);
   render(`<h2>👁️ 传球视野结果</h2>
     ${artBanner('vision')}
     <div class="card" style="text-align:center;"><div style="font-size:40px;">${hits>=3?'🔥':hits>=2?'💪':'😕'}</div><h3>找到空当 ${hits} / 4</h3><p>${hits>=4?'你像脑后长眼。':hits>=2?'视野不错，但压迫下还会慌。':'你总是慢半拍，多抬头。'}</p></div>
-    <div class="card"><h3>训练收获</h3><p>视野 +${gain.toFixed(2)} · 决断 +${gain.toFixed(2)} · 传球 +${gain.toFixed(2)}</p><p style="color:#94a3b8;">体能-6 · 教练信任+${coach}</p></div>
+    <div class="card"><h3>训练收获</h3><p>视野 +${gain.toFixed(2)} · 决断 +${gain.toFixed(2)} · 传球 +${gain.toFixed(2)}</p><p style="color:#94a3b8;">体能-6 · 教练信任+${coach}</p>${bonded.length?`<p style="color:#4ade80;">这几次传球让 ${bonded.slice(0,3).join('、')} 更信任你。</p>`:''}</div>
     <button class="btn" onclick="showMain()">继续</button>
     <button class="btn secondary" onclick="showTrainingMenu()">返回训练菜单</button>`);
   Game.visionGame=null;
@@ -27339,7 +27836,7 @@ function p2PosEnsure(p){
   if(!p) return p;
   if(!p.posMaturity||typeof p.posMaturity!=='object') p.posMaturity={};
   const main=String(p.position||'MC').toUpperCase();
-  let ov=0; try{ ov=Number(calcOverall(p))||0; }catch(e){ ov=0; }
+  let ov=0; try{ ov=Number(calcOverallFloat(p))*5||0; }catch(e){ ov=0; }
   // 旧档推断：主位置 100%；副位置按现有综合能力估算，无能力数据时缺省 55%
   const guess=ov?clamp(Math.round(45+(ov-60)*0.5),40,70):P2_POS_MAT_DEFAULT;
   p.posMaturity[main]=100;
@@ -27750,6 +28247,7 @@ function gkRedApply(m,mode){
     const addMy=goalsIn(Math.max(0,1.1+diff/24)*(left/90));
     const addOpp=goalsIn(Math.max(0,1.1-diff/24)*(left/90));
     if(m.isHome){ m.score.home+=addMy; m.score.away+=addOpp; } else { m.score.away+=addMy; m.score.home+=addOpp; }
+    if(addMy||addOpp){ p2GoalLogAdd(m,m.isHome?'home':'away','bulk',m.minute); p2GoalLogAdd(m,m.isHome?'away':'home','bulk',m.minute); }
     if(addMy||addOpp){ ensureMatchExtras(m); m.stats.shots+=addMy; m.stats.onTarget+=addMy; m.stats.oppShots+=addOpp; m.stats.oppOnTarget+=addOpp; }
   }
   m.minute=90; m.gkRedResolved=true; m.gkRedPending=false;
@@ -28135,9 +28633,9 @@ function showStats(){
     </div>`:''}
     ${p.factions?`<div class="card"><h3>🏛️ 更衣室派系</h3>
       <div class="grid-2">
-        ${P2_FACTION_META.map(m=>{const v=Number(p.factions[m.key])||0,t=p2FactionTier(v);return `<div class="stat-row"><span class="stat-label">${m.name}</span><span class="stat-value" style="color:${t.color}">${v>0?'+':''}${v} · ${t.label}</span></div>`;}).join('')}
+        ${p2FactionView(p).map(m=>`<div class="stat-row"><span class="stat-label">${m.name} ${p2FactionTrendArrow(m.delta)}</span><span class="stat-value" style="color:${m.tier.color}">${m.tier.label}</span></div>`).join('')}
       </div>
-      <p class="info">派系值范围 -20..20：+12 以上为核心，-12 以下为敌对。站队与队内会议都会改变它，派系总和会反过来影响你的首发概率。</p>
+      <p class="info">${(p.politics&&p.politics.lastDrift&&p.politics.lastDrift.notes&&p.politics.lastDrift.notes.length)?'最近一次变化：'+esc(p.politics.lastDrift.notes[0].text):'最近四周没有明显变化。'}派系态度会随出场、讲话、相处与立场每周缓慢变化，并影响你被队友推上首发的概率。</p>
     </div>`:''}
     <div class="card"><h3>📂 分赛事统计</h3>
       <table style="width:100%;font-size:12px;border-collapse:collapse;">
@@ -28270,7 +28768,7 @@ function showAttributes(back){
   const potCard=`<div class="card" style="border-color:rgba(167,139,250,.35);">
     <h3>🔍 球探评估 <small style="color:#94a3b8;font-weight:400;">区间估计，不是精确值</small></h3>
     <div class="stat-row"><span class="stat-label">天赋档位</span><span class="stat-value" style="color:#a78bfa;">${potBand.label} <span style="color:#fbbf24;">${'★'.repeat(potBand.stars)}${'☆'.repeat(5-potBand.stars)}</span></span></div>
-    <div class="stat-row"><span class="stat-label">潜力评分区间</span><span class="stat-value">${potBand.lo}–${potBand.hi}<small style="color:#94a3b8;">/100</small></span></div>
+    <div class="stat-row"><span class="stat-label">潜力评分区间</span><span class="stat-value">${potentialRange200(potBand)}<small style="color:#94a3b8;">/200</small></span></div>
     <div class="stat-row"><span class="stat-label">成长余量</span><span class="stat-value">${potLeft.dots} ${potLeft.label}</span></div>
     <p style="color:#cbd5e1;font-size:12px;line-height:1.7;margin-top:6px;">“${potBand.note}”</p>
     <p style="color:#94a3b8;font-size:12px;line-height:1.7;">${potLeft.note}</p>
@@ -28279,9 +28777,9 @@ function showAttributes(back){
   render(`<h2>📋 能力总览</h2>
     ${artBanner('training')}
     <div class="card">
-      <div class="stat-row"><span class="stat-label">${esc(p.name)} · ${pos.name}${p.role?' · '+p.role:''}</span><span class="stat-value">综合能力 ${calcOverall(p)} / 20</span></div>
+      <div class="stat-row"><span class="stat-label">${esc(p.name)} · ${pos.name}${p.role?' · '+p.role:''}</span><span class="stat-value">综合能力 ${ovr200Of(p)} / 200</span></div>
       <p style="color:#94a3b8;font-size:12px;margin-top:6px;">★ 位置核心（×1.0）· ● 战术角色重要（×0.7）· 未标记为次要（×0.4）或基本无关（×0.2）。<br>
-      综合能力＝核心均值 70% ＋ 场上属性加权均值 30%；单项属性上限 20，所以理论满值是 20（不是百分制）。每周成长速度也按权重分档：核心/角色全额、次要半速、无关四分之一速，因此次要属性会拖住综合，实战中通常到不了 20。<br>
+      综合能力＝核心均值 70% ＋ 场上属性加权均值 30%，先得到 1–20 内部值，再按分段表换算为 CA 1–200；单项属性仍是 1–20，理论满值 20。<br>
       ${p.position==='GK'?'门将属性只对门将成长，其他属性对门将的成长速度同样受限。':'门将专属属性已隐藏，也不计入综合能力与成长。'}</p>
     </div>
     ${potCard}
@@ -33217,7 +33715,9 @@ function p2WorldRetireNote(p,rows,year){
 function p2PeerYearTrack(p,year){
   if(!p||!p.world) return 0;
   const w=p.world, myAge=Number(p.age)||20;
-  const peers=(typeof p2Peers==='function'?p2Peers(p):[]).filter(x=>x&&x.club&&Math.abs((Number(x.age)||0)-myAge)<=1);
+  // R285：p2Peers 自 R284 起返回对象，这里必须取 rows，否则年度跟踪会静默抛错
+  const rows=((typeof p2Peers==='function'?p2Peers(p):null)||{}).rows||[];
+  const peers=rows.filter(x=>x&&x.club&&Math.abs((Number(x.age)||0)-myAge)<=1);
   const cur={};
   peers.forEach(x=>{ cur[x.name]=x.club; });
   let moved=0;
@@ -33556,7 +34056,7 @@ function r47RivalUpdate(p){
   const top=sq.filter(x=>x&&x[0]!==p.name&&p2GroupOf(x[1])===grp)
     .map(x=>({name:x[0],pos:String(x[1]),age:Number(x[2])||20,ability:clamp(Math.round(Number(x[3])||40),40,99)}))
     .sort((a,b)=>b.ability-a.ability)[0]||null;
-  r.rivalLine=top?`今年与你争${P2_SLOT_CN[grp]||grp}位置的是 ${top.name}（${top.age}岁·能力${top.ability}）`:'本位置暂时没有明确的竞争者';
+  r.rivalLine=top?`今年与你争${P2_SLOT_CN[grp]||grp}位置的是 ${top.name}（${top.age}岁·能力${ovr200From100(top.ability)}）`:'本位置暂时没有明确的竞争者';
   return top;
 }
 // 新队友磨合期：从 0 起步，按周回升，约 5 个月到 100；不继承离队者的关系值
@@ -33600,13 +34100,13 @@ function r47RivalHtml(p){
   const list=sq.filter(x=>x&&x[0]!==p.name&&p2GroupOf(x[1])===grp)
     .map(x=>({name:x[0],pos:String(x[1]),age:Number(x[2])||20,ca:Number(x[3])||40}))
     .sort((a,b)=>b.ca-a.ca).slice(0,4);
-  const rows=list.map((x,i)=>`<div class="stat-row"><span class="stat-label">${i+1}. ${x.name} · ${P2_SLOT_CN[p2GroupOf(x.pos)]||grp} · ${x.age}岁</span><span class="stat-value" style="color:${x.ca>me?'#f87171':'#34d399'};">能力 ${x.ca}${x.ca>me?' ↑':''}</span></div>`).join('');
+  const rows=list.map((x,i)=>`<div class="stat-row"><span class="stat-label">${i+1}. ${x.name} · ${P2_SLOT_CN[p2GroupOf(x.pos)]||grp} · ${x.age}岁</span><span class="stat-value" style="color:${x.ca>me?'#f87171':'#34d399'};">能力 ${ovr200From100(x.ca)}${x.ca>me?' ↑':''}</span></div>`).join('');
   const far=(r.farewell&&!r.farewell.used)?`<div class="card" style="border-color:#fbbf24;"><h3>告别：${r.farewell.name}</h3>
       <p style="font-size:12px;color:#a9b4d6;">${r.farewell.age}岁 · ${r.farewell.dest}，与你的关系 ${r.farewell.rel}。走之前，他回头看了你一眼。</p>
       <button class="btn" style="font-size:12px;" onclick="r47Farewell(true)">去送别（士气 +4 · 媒体 +2）</button>
       <button class="btn secondary" style="font-size:12px;" onclick="r47Farewell(false)">留在训练场（士气 -3）</button></div>`:'';
   return `<div class="card"><h3>位置竞争 · ${P2_SLOT_CN[grp]||grp}</h3>
-      <div class="stat-row"><span class="stat-label">你的能力 / 顺位</span><span class="stat-value">${me} · 第 ${p.squadRank||20} 位</span></div>
+      <div class="stat-row"><span class="stat-label">你的能力 / 顺位</span><span class="stat-value">${ovr200From100(me)} · 第 ${p.squadRank||20} 位</span></div>
       ${rows||'<p style="font-size:12px;color:#94a3b8;">本位置暂无队友</p>'}
       <p style="font-size:11px;color:#94a3b8;margin-top:6px;">${r.rivalLine||''}</p></div>${far}`;
 }
@@ -33673,11 +34173,14 @@ function p2SquadTransferWindow(p,year,used){
       if(!best) continue;
       const age=Number(best.pl[2])||24;
       const ctr=Math.max(0,(Number(best.pl[5])||year)-year);
-      const ageMult=age<=21?1.35:age<=24?1.15:age<=28?1.0:age<=31?0.72:0.45;
-      const ctrMult=ctr<=1?0.6:ctr===2?0.85:1;
       const cap=worldFeeCap(key);
-      let fee=Math.round(Math.pow(Math.max(1,best.ca-42),2.1)*8000*ageMult*ctrMult/100000)*100000;
-      fee=Math.min(cap,Math.max(500000,fee));
+      const buyerLevel=Number((LEAGUES[key]||{}).level)||70;
+      const buyerMult=1+(buyerLevel-70)/200;
+      const core=p2ValueCore(best.ca,age,ctr,key);
+      // R287 C2：年度阵容窗并入共享核心，保留它自己的选人/编制逻辑。
+      const fee=Math.min(cap,Math.max(500000,Math.round(core*buyerMult/100000)*100000));
+      const room=p2TransferBudgetRoom(buyer,key,w.squads[buyer]&&w.squads[buyer].rep,year,5);
+      if(fee>room) continue;
       if(!isFinite(fee)||fee<=0) continue;
       const sellerTop=w.squads[best.club].pl.map(x=>Number(x[3])||0).sort((a,b)=>b-a).slice(0,3);
       const sellerBest=sellerTop[0]||0;
@@ -33695,11 +34198,12 @@ function p2SquadTransferWindow(p,year,used){
       // 卖方立即补一名同位置青训，人数与位置完整性不因卖人破洞
       const srng=__genRng(__genHash('fill|'+best.club+'|'+year+'|'+best.pl[0]));
       w.squads[best.club].pl.push([p2SquadName((LEAGUES[key]&&LEAGUES[key].country)||'通用',srng,used),best.pl[1],p2SquadIr(srng,17,19),Math.round(clamp((str[best.club]||60)-p2SquadIr(srng,12,20),24,78)),Math.round(clamp((str[best.club]||60)+p2SquadIr(srng,4,14),30,96)),year+p2SquadIr(srng,3,5),year,1]);
-      w.squadMeta.tx.unshift({y:year,from:best.club,to:buyer,n:best.pl[0],pos:best.pl[1],fee:fee,cap:cap});
+      w.squadMeta.tx.unshift({y:year,from:best.club,to:buyer,n:best.pl[0],pos:best.pl[1],fee:fee,cap:cap,
+        id:['ai',year,best.club,buyer,best.pl[0],fee].join('|')});
       if(w.squadMeta.tx.length>120) w.squadMeta.tx.length=120;
       done++;
       if(best.ca>=73||best.ca>=sellerBest-2){
-        worldNews(p,'转会',`${buyer}从${best.club}签下${best.pl[1]}${best.pl[0]}（${age}岁/${best.ca}能力），转会费${worldFeeText(fee)}${best.ca>=78?'，核心球员被挖走':''}。`,buyer);
+        worldNews(p,'转会',`${buyer}从${best.club}签下${best.pl[1]}${best.pl[0]}（${age}岁/${ovr200From100(best.ca)}能力），转会费${worldFeeText(fee)}${best.ca>=78?'，核心球员被挖走':''}。`,buyer);
       }
     }
   });
@@ -34721,6 +35225,18 @@ function worldRecordMove(name,from,to,year,fee,type,row,extra){
   Game.worldMarketLog.unshift({day:dateStr(),year,player:name,from:from||null,to:to||null,fee:fee||0,type:type||'transfer'});
   if(Game.worldMarketLog.length>120) Game.worldMarketLog.length=120;
   const p=Game.player;
+  // R287 C0：虚拟窗的付费转会谈成后同步写世界账本，和年度阵容窗使用同一份 squadMeta.tx；
+  // p2FinNetSpend 以 (year/player/from/to/fee) 去重，避免和 worldMarketLog 重复计账。
+  if(p&&p.world&&to&&from&&fee>0&&(type||'transfer')==='transfer'){
+    if(!p.world.squadMeta) p.world.squadMeta={tx:[],sold:0};
+    if(!Array.isArray(p.world.squadMeta.tx)) p.world.squadMeta.tx=[];
+    const txId=['ai',year,from,to,name,Number(fee)||0].join('|');
+    if(!p.world.squadMeta.tx.some(x=>x&&x.id===txId)){
+      p.world.squadMeta.tx.unshift({y:year,from,to,n:name,pos:(row&&row[1])||'MC',fee:Number(fee)||0,
+        cap:worldFeeCap((__CLUB_LEAGUE_KEY&&__CLUB_LEAGUE_KEY[to])||''),id:txId});
+      if(p.world.squadMeta.tx.length>120) p.world.squadMeta.tx.length=120;
+    }
+  }
   if(p&&p.world){
     if(!p.world.news) p.world.news=[];
     const label=type==='retire'?'退役':type==='loan'?'租借':type==='released'?'解约':'转会';
@@ -34781,6 +35297,18 @@ function worldFeeCap(leagueKey){
   if(lv>=64) return 30000000;
   return 15000000;
 }
+// R287：世界/玩家共用的中性估值核心。
+// 以原世界虚拟窗为锚：CA 0–100、年龄、合同剩余年、买方联赛；不含随机、声望与个人状态。
+// 买方购买力、玩家声望/状态/上季产出等由调用方各自叠加，避免两套公式互相漂移。
+function p2ValueCore(ca,age,yearsLeft,leagueKey){
+  const c=clamp(Number(ca)||0,1,99);
+  const a=clamp(Number(age)||24,15,45);
+  const years=Math.max(0,Number(yearsLeft)||0);
+  const ageMult=a<=21?1.35:a<=24?1.15:a<=28?1.0:a<=31?0.75:0.5;
+  const ctrMult=years<=1?0.6:years===2?0.85:1.0;
+  const raw=Math.pow(Math.max(1,c-45),2.3)*9000*ageMult*ctrMult;
+  return Math.min(worldFeeCap(leagueKey),Math.max(500000,raw));
+}
 // ===== Round 42：俱乐部财政（世界侧与玩家俱乐部共用一套口径） =====
 // 收入：门票（上座率 × 球场容量 × 票价档位，按俱乐部 level 推导）+ 赞助 + 转播分成；
 // 支出：工资总额 + 转会摊销 + 运营。工资上限按俱乐部 level 落在收入的 65%–75%。
@@ -34836,8 +35364,33 @@ function p2ClubFinance(name,leagueKey,levelHint){
 // 本赛季转会净支出：买方为正、卖方为负；只统计当年成交
 function p2FinNetSpend(club,year){
   const p=Game.player, tx=(p&&p.world&&p.world.squadMeta&&p.world.squadMeta.tx)||[];
-  return tx.filter(x=>x&&Number(x.y)===Number(year)&&!x.loan)
-    .reduce((n,x)=>n+((x.to===club?Number(x.fee)||0:0)-(x.from===club?Number(x.fee)||0:0)),0);
+  const y=Number(year);
+  const seen=new Set();
+  let net=0;
+  tx.forEach(x=>{
+    if(!x||Number(x.y)!==y||x.loan) return;
+    const key=[x.y,x.n||'',x.from||'',x.to||'',Number(x.fee)||0].join('|');
+    seen.add(key);
+    net+=(x.to===club?Number(x.fee)||0:0)-(x.from===club?Number(x.fee)||0:0);
+  });
+  // R287：虚拟窗旧档只有 worldMarketLog、没有 tx；用同一键去重后补读，避免账本漏记。
+  const log=(Game.worldMarketLog||[]).filter(t=>t&&Number(t.year)===y&&t.type==='transfer'&&(Number(t.fee)||0)>0);
+  log.forEach(t=>{
+    const key=[t.year,t.player||'',t.from||'',t.to||'',Number(t.fee)||0].join('|');
+    if(seen.has(key)) return;
+    seen.add(key);
+    net+=(t.to===club?Number(t.fee)||0:0)-(t.from===club?Number(t.fee)||0:0);
+  });
+  return net;
+}
+// R287：买方可用转会额度。share 默认 0.55（玩家报价）；世界 AI 用 1.0，只用真实可支配额度。
+function p2TransferBudgetRoom(clubName,leagueKey,rep,year,share){
+  try{
+    const f=p2ClubFinance(clubName,leagueKey,rep);
+    const spent=Math.max(0,p2FinNetSpend(clubName,Number(year)||currentYear()));
+    const ratio=Number.isFinite(Number(share))?Number(share):0.55;
+    return Math.max(0,Number(f.budget||0)*ratio-spent);
+  }catch(e){ return 0; }
 }
 // 玩家俱乐部工资空间：上限 − 工资总额 + 自己现有工资（续约是替换自身合同，不是新增一份）
 function p2ClubWageState(clubName,leagueKey,levelHint,ownWage){
@@ -34961,12 +35514,16 @@ function worldMakeTransfer(){
   const age=playerAge(pl,year);
   const ctr=worldContractOf(pl[0],seller.name,year,pl);
   const yearsLeft=Math.max(0,(Number(ctr.until)||year)-year);
-  const ageMult=age<=21?1.35:age<=24?1.15:age<=28?1.0:age<=31?0.75:0.5;
-  const ctrMult=yearsLeft<=1?0.6:yearsLeft===2?0.85:1.0;
   const buyerLevel=Number((LEAGUES[buyer.leagueKey]||{}).level)||70;
   const buyerMult=1+(buyerLevel-70)/200;
   const cap=worldFeeCap(buyer.leagueKey);
-  const fee=loan?0:Math.min(cap,Math.max(500000,Math.round(Math.pow(Math.max(1,q-45),2.3)*9000*ageMult*ctrMult*buyerMult/100000)*100000));
+  const core=p2ValueCore(q,age,yearsLeft,buyer.leagueKey);
+  // R287 C1：世界虚拟窗只调用共享核心，叠加买方购买力与随机浮动；不再自己维护第二套指数公式。
+  const fee=loan?0:Math.min(cap,Math.max(500000,mvRound(core*buyerMult*randFloat(0.9,1.15))));
+  if(!loan){
+    const room=p2TransferBudgetRoom(buyer.name,buyer.leagueKey,buyer.rep,year,5);
+    if(fee>room) return null;
+  }
   // 买方编制已满时先解约末位球员，避免引援后阵容超编
   if(!worldMakeRoom(buyer.name,year,pl)) return null;
   worldRecordMove(name,seller.name,buyer.name,year,fee,loan?'loan':'transfer',pl,loan?{loan:true,until:year}:null);
@@ -35179,28 +35736,29 @@ function p2Peers(p){
     });
   });
   const myOvr=Math.round((typeof calcOverallFloat==='function'?calcOverallFloat(p):calcOverall(p)/5)*5);
+  const myCa=ovr200From100(myOvr);
   let win=1, cohort=rows.filter(x=>x.pos!=='GK'&&Math.abs(x.age-cy)<=win);
   while(!cohort.length&&win<4){ win++; cohort=rows.filter(x=>x.pos!=='GK'&&Math.abs(x.age-cy)<=win); }
   cohort.sort((a,b)=>b.ca-a.ca);
   const rank=Math.min(Math.max(1,cohort.length),1+cohort.filter(x=>x.ca>myOvr).length);
   let sameWin=2, same=rows.filter(x=>p2PeerLine(x.pos)===line&&Math.abs(x.age-cy)<=sameWin).sort((a,b)=>b.ca-a.ca).slice(0,6);
   if(!same.length&&sameWin<4){ sameWin=4; same=rows.filter(x=>p2PeerLine(x.pos)===line&&Math.abs(x.age-cy)<=sameWin).sort((a,b)=>b.ca-a.ca).slice(0,6); }
-  return {myOvr,rank,total:cohort.length,same,line,win,sameWin};
+  return {myOvr,myCa,rank,total:cohort.length,same,line,win,sameWin,rows};
 }
 function showPeers(){
   const p=Game.player; if(!p) return showMenu();
   p2Ensure(p);
   const d=p2Peers(p);
   const rows=d.same.length?d.same.map(x=>{
-    const diff=x.ca-d.myOvr;
-    return `<div class="stat-row p2-peer-row"><span class="stat-label">${p2ClubLink(x.club)} · ${x.name}<span style="color:#64748b;font-size:11px;"> · ${x.age}岁 · ${p2SquadGroupLabel(x.pos)}</span></span><span class="stat-value" style="color:${diff>0?'#f87171':diff<0?'#4ade80':'#94a3b8'}">${x.ca}${diff===0?'':' ('+(diff>0?'+':'')+diff+')'}</span></div>`;
+    const xCa=ovr200From100(x.ca), diff=xCa-d.myCa;
+    return `<div class="stat-row p2-peer-row"><span class="stat-label">${p2ClubLink(x.club)} · ${x.name}<span style="color:#64748b;font-size:11px;"> · ${x.age}岁 · ${p2SquadGroupLabel(x.pos)}</span></span><span class="stat-value" style="color:${diff>0?'#f87171':diff<0?'#4ade80':'#94a3b8'}">${xCa}${diff===0?'':' ('+(diff>0?'+':'')+diff+')'}</span></div>`;
   }).join(''):'<p style="color:#94a3b8;">同龄同位置的球员暂时没有数据。</p>';
   const pct=d.total?Math.round((1-d.rank/Math.max(1,d.total))*100):0;
   render(`<h2>👥 同龄人</h2>${artBanner('stadium','compact')}
     <div class="card"><h3>你和这一代</h3>
-      <div class="stat-row"><span class="stat-label">你的综合能力</span><span class="stat-value">${d.myOvr}</span></div>
+      <div class="stat-row"><span class="stat-label">你的综合能力</span><span class="stat-value">${d.myCa} / 200</span></div>
       <div class="stat-row"><span class="stat-label">同龄段（±${d.win}岁）能力排名</span><span class="stat-value">${d.rank} / ${d.total}${d.total?` · 超过 ${pct}%`:''}</span></div>
-      <p style="font-size:12px;color:#94a3b8;">只统计有球队的在册球员；排名按当前能力，不含潜力。</p></div>
+      <p style="font-size:12px;color:#94a3b8;">综合能力按 CA 1–200 显示；名次仍按内部能力排序（换算单调，名次与旧口径一致）；只统计有球队的在册球员，不含潜力。</p></div>
     <div class="card"><h3>同位置、年龄±${d.sameWin}岁</h3>${rows}</div>
     <button class="btn" onclick="navBack()">返回</button>`);
 }
@@ -35260,8 +35818,8 @@ function p2SquadRow(club,pl,idx){
     <span style="flex:0 0 30px;color:#94a3b8;font-size:10px;">${pl[1]}</span>
     <span style="flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;color:#e2e8f0;">${p2Esc(pl[0])}${hg?' <span style="color:#fbbf24;font-size:9px;">青</span>':''}</span>
     <span style="flex:0 0 auto;font-size:11px;color:#94a3b8;">${pl[2]}岁</span>
-    <span style="flex:0 0 auto;font-size:11px;color:#cbd5e1;">能<b style="color:#e2e8f0;">${ca}</b></span>
-    <span style="flex:0 0 auto;font-size:10px;color:#fbbf24;" title="潜力 ${pa}">${p2PotStars(pa)}</span>
+    <span style="flex:0 0 auto;font-size:11px;color:#cbd5e1;">能<b style="color:#e2e8f0;">${ovr200From100(ca)}</b></span>
+    <span style="flex:0 0 auto;font-size:10px;color:#fbbf24;" title="潜力 CA ${ovr200From100(pa)}">${p2PotStars(pa)}</span>
     <span style="flex:0 0 46px;text-align:right;font-size:10px;color:#64748b;">${pl[5]||'—'}</span>
   </div>`;
 }
@@ -35361,7 +35919,7 @@ function p2ShowSquadPlayer(club,idx){
     <h2>👤 ${p2Esc(pl[0])}</h2>
     <div class="card"><h3>${p2Esc(club)} · ${p2SquadGroupLabel(pl[1])}</h3>
       <div class="stat-row"><span class="stat-label">年龄</span><span class="stat-value">${pl[2]} 岁</span></div>
-      <div class="stat-row"><span class="stat-label">能力 / 潜力</span><span class="stat-value">${pl[3]} / ${pl[4]} <span style="color:#fbbf24;">${p2PotStars(pl[4])}</span></span></div>
+      <div class="stat-row"><span class="stat-label">能力 / 潜力（CA）</span><span class="stat-value">${ovr200From100(pl[3])} / ${ovr200From100(pl[4])} <span style="color:#94a3b8;font-size:11px;">（1–200）</span> <span style="color:#fbbf24;">${p2PotStars(pl[4])}</span></span></div>
       <div class="stat-row"><span class="stat-label">合同到期</span><span class="stat-value">${pl[5]||'—'} 年</span></div>
       <div class="stat-row"><span class="stat-label">效力年数</span><span class="stat-value">${tenure} 年（${since} 入队）</span></div>
       <div class="stat-row"><span class="stat-label">青训身份</span><span class="stat-value" style="color:${hg?'#fbbf24':'#94a3b8'};">${hg?'本队青训':'非本队青训'}</span></div>
@@ -37191,22 +37749,24 @@ function p2CoachPromoteYouth(idx){
   saveGame();
   p2ShowCoachHub();
 }
-// Round 105：卖掉/放弃苗子——复用 estimateMarketValue 的身价/潜力口径，按年龄与潜力定价
-// 17 岁在当前身价曲线里折价很深（mvAgeFactor=0.25），青训补偿按青年溢价系数换算，并封顶队内现金 25%
-const P2_COACH_YOUTH_SALE_PREMIUM=4.0, P2_COACH_YOUTH_SALE_CAP=0.25;
+// R287：苗子定价不再用「身价 × 100」的魔数，改为共享核心 × 35%；
+// 17 岁年龄折价已在 p2ValueCore 的年龄系数里，保留队内现金 25% 的硬上限。
+const P2_COACH_YOUTH_VALUE_SHARE=0.35, P2_COACH_YOUTH_SALE_CAP=0.25;
 function p2CoachYouthMarketPlayer(pl,leagueKey){
   const age=Number(pl&&pl[2])||17, ca=Number(pl&&pl[3])||40, pa=Math.max(Number(pl&&pl[4])||ca,ca);
   const pos=String((pl&&pl[1])||'MC');
-  const attrs={}; ATTRS.forEach(function(a){ attrs[a]=ca; });
+  // 名单里的 ca 是 0–100 的 CA，属性是 1–20；以前直接把 CA 当属性，综合被放大约 5 倍
+  const attrs={}; ATTRS.forEach(function(a){ attrs[a]=clamp(ca/5,1,20); });
   return {age:age,position:pos,attrs:attrs,reputation:0,injury:false,
     hidden:{potential:pa},contract:{until:currentYear()+2},
     stats:{club:{leagueKey:leagueKey||'epl'}},talents:[]};
 }
 function p2CoachYouthValue(pl,budget){
   const lk=(Game.player&&Game.player.postCareer&&Game.player.postCareer.coachClub&&Game.player.postCareer.coachClub.leagueKey)||'epl';
-  const mv=estimateMarketValue(p2CoachYouthMarketPlayer(pl,lk));
-  const raw=(Number(mv)||0)/10000*P2_COACH_YOUTH_SALE_PREMIUM;
-  let fee=Math.max(100,Math.round(raw/10)*10);
+  const age=Number(pl&&pl[2])||17, ca=Number(pl&&pl[3])||40, pa=Math.max(Number(pl&&pl[4])||ca,ca);
+  // 苗子看潜力：17 岁低 CA 高 PA 的球员，不能按当前 CA 被压到最低价。
+  const core=p2ValueCore(Math.max(ca,pa),age,2,lk);
+  let fee=Math.max(100,Math.round(core*P2_COACH_YOUTH_VALUE_SHARE/10000/10)*10);
   const b=Number(budget)||0;
   if(b>0) fee=Math.min(fee,Math.round(b*P2_COACH_YOUTH_SALE_CAP));
   return fee;
@@ -38650,7 +39210,7 @@ function showEndorsements(){
   const agent=p.agent||{};
   render(`<h2>💼 代言与经纪</h2>${artBanner('money','compact')}
     <div class="card"><h3>经纪人</h3>
-      <div class="stat-row"><span class="stat-label">${agent.name||'—'}</span><span class="stat-value">能力${agent.quality||50} · 佣金${Math.round((agent.commission||0.1)*100)}%</span></div>
+      <div class="stat-row"><span class="stat-label">${agent.name||'—'}</span><span class="stat-value">业务能力${agent.quality||50} · 佣金${Math.round((agent.commission||0.1)*100)}%</span></div>
       <div class="stat-row"><span class="stat-label">放风成功率</span><span class="stat-value">${Math.round(p2AgentLeakChance(p)*100)}%</span></div>
       <button class="btn secondary" onclick="showAgentMarket()">🧑‍💼 经纪人市场</button>
     </div>
@@ -38966,8 +39526,8 @@ function matchDayButtons(m){
       <button class="btn" onclick="quickMatchStart()">⚡ 开始比赛（自动准备）</button>
     </div>
     <div class="card" style="margin-top:8px;border-left:4px solid #fbbf24;background:rgba(8,10,32,.55);">
-      <p style="margin:0;font-size:12px;color:#fbbf24;font-weight:800;">自动：跳过赛前仪式（锐利 −20）· 赛后径直回通道（压力 +2）</p>
-      <p style="margin:4px 0 0;font-size:11px;color:#94a3b8;">想拿满赛前锐利，请点下方「🎬 完整赛前仪式」；自动不会替你补这 20 点。</p>
+      <p style="margin:0;font-size:12px;color:#fbbf24;font-weight:800;">自动：跳过赛前仪式与入场流程，直接开球</p>
+      <p style="margin:4px 0 0;font-size:11px;color:#94a3b8;">自动准备不会领取入场、抵达、更衣室与热身的锐利加成；德比、杯赛决赛等关键战仍保留完整赛前流程。想拿满赛前状态，请点下方「🎬 完整赛前仪式」。</p>
     </div>
     <details class="card" style="margin-top:8px;"><summary style="cursor:pointer;font-size:13px;color:#cbd5e1;">可选准备（5）</summary>
       <button class="btn secondary" style="display:block;width:100%;text-align:left;margin-top:6px;" onclick="tacticsOpen('matchday')">📋 调整战术</button>
@@ -40905,7 +41465,7 @@ function p2ShowRival(){
   render(`<h2>🔥 宿敌</h2>${artBanner('tunnel','compact')}
     <div class="card">
       <div class="talent-name">${r.name} · ${r.pos}</div>
-      <div class="talent-desc">${r.age||'—'}岁 · 现效力${r.club||'未知俱乐部'} · 能力${Math.round(r.level||70)} · 状态${Math.round((r.form||6)*10)/10}/10</div>
+      <div class="talent-desc">${r.age||'—'}岁 · 现效力${r.club||'未知俱乐部'} · 能力${ovr200From100(r.level||70)} · 状态${Math.round((r.form||6)*10)/10}/10</div>
       <div class="stat-row"><span class="stat-label">本赛季</span><span class="stat-value">${st.apps||0}场 ${st.goals||0}球 ${st.assists||0}助${isGK?` ${st.cleanSheets||0}零封`:''}</span></div>
       ${r.lastSeason?`<div class="stat-row"><span class="stat-label">上赛季</span><span class="stat-value">${r.lastSeason.apps||0}场 ${r.lastSeason.goals||0}球 ${r.lastSeason.assists||0}助</span></div>`:''}
     </div>
@@ -41659,6 +42219,7 @@ function p2Weekly(p){
   if(p2MediaWeekly(p)) return true;
   if(p2CaptainElection(p)) return true;
   p2MeetingDebtCheck(p);
+  if(typeof p2PoliticsWeeklyDrift==='function') p2PoliticsWeeklyDrift(p);
   if(p2LockerMeetingWeekly(p)) return true;
   if(p2ClubStoryWeekly(p)) return true;
   if(p2NpcTick(p)) return true;
@@ -49697,9 +50258,6 @@ function showLockerRoom(){
   const weekKey=`${Game.date.year}-${Game.date.month}-W${Math.floor((Game.date.day-1)/7)}`;
   const canTalk=l.lastTeamTalk!==weekKey;
   const speeches=l.speeches.length?l.speeches.slice(0,8).map(s=>`<p>${s.date} · ${s.label}${s.delta?`（威望${s.delta>0?'+':''}${s.delta}）`:''}</p>`).join(''):'<p style="color:#94a3b8;">你还没有在更衣室里正式说过话。</p>';
-  const factions=p.factions?`<div class="grid-2">
-      ${P2_FACTION_META.map(m=>{const v=Number(p.factions[m.key])||0,t=p2FactionTier(v);return `<div class="stat-row"><span class="stat-label">${m.name}</span><span class="stat-value" style="color:${t.color}">${v>0?'+':''}${v} · ${t.label}</span></div>`;}).join('')}
-    </div>`:'';
   const meetings=(l.meetings||[]).slice(0,3);
   const meetingHtml=meetings.length?meetings.map(m=>{
     const t=p2MeetingTopic(m.topicId);
@@ -49709,7 +50267,7 @@ function showLockerRoom(){
   }).join(''):'<p style="color:#94a3b8;">还没有开过队内会议。</p>';
   const meetingReady=!l.pendingMeeting&&daySerial(Game.date)-(l.lastMeetingDay||0)>=21;
   render(`<h2>👕 更衣室</h2>${artBanner('tunnel')}
-    ${p2TipCard(p,'locker','更衣室看什么','队友各有信任值，同国籍/同位置会抱团；<b>派系</b>会影响首发和队内事件。威望不够时，先在队内会议里站队、拉票，再谈袖标。')}
+    ${p2TipCard(p,'locker','更衣室看什么','队友各有信任值，同国籍/同位置会抱团；<b>派系态度</b>每周会随你的出场、讲话和相处慢慢变化。前期先经营关系，等进了轮换再谈站队和袖标。')}
     <div class="card"><h3>你的分量</h3>
       <div class="stat-row"><span class="stat-label">更衣室威望</span><span class="stat-value">${Math.round(l.respect)}（${tier}）</span></div>
       <div class="stat-row"><span class="stat-label">队友关系</span><span class="stat-value">${Math.round((p.relationships.teammates&&p.relationships.teammates.general)||50)}</span></div>
@@ -49717,9 +50275,8 @@ function showLockerRoom(){
       <div class="stat-row"><span class="stat-label">全队士气</span><span class="stat-value">${Math.round(l.teamMorale===undefined?50:l.teamMorale)}</span></div>
       <div class="stat-row"><span class="stat-label">全队专注</span><span class="stat-value">${Math.round(l.teamFocus===undefined?50:l.teamFocus)}</span></div>
       <div class="stat-row"><span class="stat-label">战术契合</span><span class="stat-value">${Math.round(l.tacticalFit===undefined?50:l.tacticalFit)}</span></div>
-      ${factions}
     </div>
-    ${p2PoliticsCard(p,true)}
+    ${p2PoliticsPanelHtml(p)}
     <div class="card"><h3>🗳️ 队内会议</h3>
       <p style="color:#94a3b8;font-size:12px;">派系会在更衣室里提出议题。你先站边，也可以私下拉票。</p>
       ${l.pendingMeeting?`<button class="btn" onclick="showLockerMeeting()">继续没开完的会议</button>`:`<button class="btn" ${meetingReady?'':'disabled style="opacity:.45;"'} onclick="p2StartLockerMeeting()">召开队内会议</button>`}
@@ -50306,9 +50863,9 @@ function showYouthScouting(){
       <p style="color:#94a3b8;font-size:12px;">点位置或网络会立刻出一份本周报告；同一周重复点击不会重复扣预算。</p>
     </div>
     ${cands.length?cands.map((c,i)=>`<div class="card"><div class="talent-name">${esc(c.name)} <span style="float:right;color:#ffd166;">${c.pos} · ${c.age}岁</span></div>
-      <div class="talent-desc">当前能力 ${Math.round(c.ov)} · 潜力 ${Math.round(c.pot)} · 青训补偿 ¥${(c.fee/10000).toFixed(1)}万 · 参考周薪 ¥${c.wage.toLocaleString()}</div>
+      <div class="talent-desc">当前能力 ${ovr200From100(c.ov)} · 潜力 ${ovr200From100(c.pot)} · 青训补偿 ¥${(c.fee/10000).toFixed(1)}万 · 参考周薪 ¥${c.wage.toLocaleString()}</div>
       <button class="btn" onclick="signYouthProspect(${i})">签约（占 1 个名额）</button></div>`).join(''):`<div class="card"><p style="color:#94a3b8;">本周还没有球探报告，选一个网络开始搜索。</p></div>`}
-    ${(ya.prospects||[]).length?`<div class="card"><h3>已签下的梯队球员</h3>${ya.prospects.map(x=>`<div class="stat-row"><span class="stat-label">${esc(x.name)}（${x.pos}）</span><span class="stat-value">${x.age}岁 · 能力${Math.round(x.ov)} · 潜力${Math.round(x.pot)}</span></div>`).join('')}</div>`:''}
+    ${(ya.prospects||[]).length?`<div class="card"><h3>已签下的梯队球员</h3>${ya.prospects.map(x=>`<div class="stat-row"><span class="stat-label">${esc(x.name)}（${x.pos}）</span><span class="stat-value">${x.age}岁 · 能力${ovr200From100(x.ov)} · 潜力${ovr200From100(x.pot)}</span></div>`).join('')}</div>`:''}
     <button class="btn secondary" onclick="showClubBusiness()">返回俱乐部经营</button>`);
 }
 function showClubBusiness(){
@@ -51824,7 +52381,7 @@ function showCreationGuide(){
   ];
   render(`<h2>📖 创建流程</h2>${artBanner('training')}
     <div class="card"><p style="color:#94a3b8;font-size:12px;line-height:1.8;">快速开局会随机生成球员并直接进入试训；想亲手捏一名球员，可在主菜单点「新游戏」完整体验下面 8 步。<br>
-      属性与综合能力都是 <b>1–20 制</b>，不是百分制：单项属性上限 20，所以综合能力的理论满值也是 20。球队等级 85/70/55 的一线队竞争门槛约为综合 15/12/9。</p></div>
+      属性是 <b>1–20 制</b>：单项属性上限 20；综合能力按 FM 口径显示为 <b>CA 1–200</b>（由 1–20 内部综合值按分段表换算）。球队等级 85/70/55 的一线队竞争门槛约为内部综合 15/12/9（CA 约 166/142/78）。</p></div>
     ${steps.map(([n,d])=>`<div class="card talent-card" style="cursor:default;"><div class="talent-name">${n}</div><div class="talent-desc">${d}</div></div>`).join('')}
     <button class="btn secondary" onclick="navBack()">返回</button>`,'system:guide');
 }
@@ -54801,9 +55358,30 @@ function textFactMatch(m){
   if(!m||!m.score) return null;
   const mine=m.isHome?m.score.home:m.score.away, theirs=m.isHome?m.score.away:m.score.home;
   const st=m.stats||{};
+  // R286：比分时间线（本场内存记录）。只有逐球记录齐全时，才能证实「扳平/反超/锁定胜局」。
+  // 缺记录（跳过比赛、旧档中场读回）时 timeline=false，这三类措辞一律不通过，不做推测。
+  const gl=Array.isArray(m.goalLog)?m.goalLog:null;
+  const gs={timeline:!!(gl&&gl.length),equalizer:false,goAhead:false,sealed:false};
+  if(gs.timeline){
+    const mySide=m.isHome?'home':'away';
+    let ph=0,pa=0;
+    gl.forEach(e=>{
+      const eh=Number(e&&e.h)||0, ea=Number(e&&e.a)||0;
+      if(e&&e.kind==='player'){
+        const bm=mySide==='home'?ph:pa, bt=mySide==='home'?pa:ph;
+        const am=mySide==='home'?eh:ea, at=mySide==='home'?ea:eh;
+        if(bm<bt&&am===at) gs.equalizer=true;
+        if(bm<=bt&&am>at) gs.goAhead=true;
+        if((Number(e.min)||0)>=70&&(am-at)>=2&&(bm-bt)<2&&am>at) gs.sealed=true;
+      }
+      ph=eh; pa=ea;
+    });
+    if(!(mine>theirs)) gs.sealed=false;
+  }
   return {ha:m.isHome?'主场':'客场',mine,theirs,opp:String(m.opponent||'对手'),
     scoreLine:mine+'-'+theirs,won:mine>theirs,drew:mine===theirs,
     g:Number(m.playerGoals)||0,a:Number(m.playerAssists)||0,
+    equalizer:gs.equalizer,goAhead:gs.goAhead,sealed:gs.sealed,timeline:gs.timeline,
     minutes:(m.playerMinutes===undefined?90:Number(m.playerMinutes)||0),
     shots:Number(st.shots)||0,onTarget:Number(st.onTarget)||0,keyPasses:Number(st.keyPasses)||0,
     passes:Number(st.passes)||0,passesOk:Number(st.passesOk)||0,
@@ -54849,7 +55427,11 @@ function textClaimIssues(raw,facts,opts){
   need(/梅开二度|独中两元|两球/,g>=2,'声称进两球');
   need(/帽子戏法|独中三元|三球/,g>=3,'声称进三球');
   need(/绝杀|读秒|压哨/,mf.late&&g>=1&&Math.abs(mf.mine-mf.theirs)<=1,'声称绝杀');
-  need(/进球(?!荒)|破门|扳平比分|反超比分|锁定胜局/,g>=1,'声称进球');
+  need(/进球(?!荒)|破门/,g>=1,'声称进球');
+  // R286：比分状态措辞按「进球当时的比分」判定，不再和普通进球共用一条规则
+  need(/扳平/,mf.equalizer,'声称扳平（该进球未扳平比分）');
+  need(/反超(?!登顶)/,mf.goAhead,'声称反超（该进球未反超比分）');
+  need(/锁定胜局|杀死比赛/,mf.sealed,'声称锁定胜局（本场无锁定胜局的进球）');
   need(/一传一射|传射建功/,g>=1&&a>=1,'声称传射');
   need(/送出助攻|助攻了|一次助攻|1次助攻/,a>=1,'声称助攻');
   need(/零封|一球未失/,mf.oppGoals===0,'声称零封');
@@ -55371,12 +55953,14 @@ function voxFrontPage(p,entry){
   };
   const body=(T.body||[[]]);
   // R212：头版导语必须带上本场事实（我方-对手 + 对手名），避免 40 篇报道 0 篇提到比分/对手
-  const scLine=voiceScoreLine(entry&&entry.match);
+  const m=entry&&entry.match;
+  const scLine=voiceScoreLine(m) || (m&&m.score?`${m.isHome?'主场':'客场'} ${m.score.home}-${m.score.away}${m.opponent?' '+m.opponent:''}`:'');
   const ledePick=pick('lede',T.lede);
+  const lede=scLine?(scLine+'。'+ledePick):ledePick||'';
   return {
     masthead:{name:outlet,meta:'号外 · '+((entry&&entry.day)||dateStr())+' · 售价 ¥2'},
     kicker:pick('kicker',T.kicker),headline:pick('head',T.head),deck:pick('deck',T.deck),
-    lede:scLine?(scLine+'。'+ledePick):ledePick,
+    lede:lede||(m?`${m.isHome?'主场':'客场'} ${m.score?m.score.home+'-'+m.score.away:''}${m.opponent?' '+m.opponent:''}。`:''),
     body:[0,1,2].map(i=>pick('body'+i,(body[i]||body[0]||[]))),
     pull:pick('pull',T.pull),
     sidebar:[{h:'本报评论',p:pick('side',T.side)},{h:'数据',p:voxStatLine(p,entry)}]
@@ -55392,11 +55976,18 @@ function buildMatchEntryV2(p,m,rating,played){
   const base=buildMatchEntry(p,m,rating,played);
   // 未出场只能走板凳视角的旧版文案：VOX 头版是按 frame 预设的，会写出进球/过人/评分，谎报上场
   if(!played) return base;
-  if(!m||typeof VOX_ACTORS!=='object'||!Object.keys(VOX_ACTORS).length) return base;
+  if(!m||typeof VOX_ACTORS!=='object'||!Object.keys(VOX_ACTORS).length){
+    try{ return Object.assign({},base,{paper:voxFrontPage(p,{day:dateStr(),rating:(Number(rating)||6).toFixed(1),score:voiceScore(m,rating,played),honour:'',record:'',match:m})}); }
+    catch(e){ return base; }
+  }
   const ctx=voxContext(p,{match:m,rating:rating,played:played,score:voiceScore(m,rating,played)});
   ctx.score=voiceScore(m,rating,played);
   const quotes=voxSelectQuotes(p,ctx,{allowLocker:true});
-  if(!quotes.length) return base;
+  if(!quotes.length){
+    // R287：引语池为空时仍要给赛后头版补一张纯事实纸，不能让 e.paper 为空导致 R212 漏对手/比分
+    try{ return Object.assign({},base,{paper:voxFrontPage(p,{day:dateStr(),rating:(Number(rating)||6).toFixed(1),score:ctx.score,honour:'',record:'',match:m})}); }
+    catch(e){ return base; }
+  }
   const acc=voxAccEffects(quotes,m,p);
   // R216：channelMix 会把 buildMatchEntry 的「赛后报道」引语整段替换掉，导致 R212 的锚点在线上不生效。
   // 这里在替换后的引语里补一条带当场比分/对手的报道句；数值仍用替换前的 acc，锚点只影响展示。
@@ -59362,7 +59953,7 @@ updateSfxBtn();
     if(!Game.player) return;
     Game.log.unshift(`[${dateStr()}] 页面重新打开后已接回最近的存档。`);
     const midMatch=!!(Game.currentMatch&&!Game.currentMatch.over);
-    showMain();
+    if(Game.screen!=='story:scene') showMain();
     if(midMatch) showToast('已接回上场未踢完的比赛','info');
   }catch(e){ diagSoft('BOOT_RESUME', e); }
 })();
