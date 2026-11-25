@@ -1280,7 +1280,7 @@ const randFloat = (min, max) => Math.random() * (max - min) + min;
 const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
 
 // ===================== 版本号（每次发版必改；sw.js 的 BUILD 必须与本值一致） =====================
-const BUILD_ID = '2026.11.25.288';
+const BUILD_ID = '2026.11.25.289';
 // 措施四：开发期横幅（仅 ?dev=1）
 if(typeof location!=='undefined' && /[?&]dev=1(?:&|$)/.test(location.search||'')){
   try{ console.log('%c[BUILD]','color:#0af',BUILD_ID); }catch(e){/*静默:日志*/}
@@ -1545,7 +1545,7 @@ const ASSERT_LEVEL = (function(){
   return 0;
 })();
 // 与 sw.js 的 BUILD 必须一致；tools/guard.js 会在发布前比对两者
-const SW_BUILD = '2026.11.25.288';
+const SW_BUILD = '2026.11.25.289';
 function assertInv(id, cond, detail){
   if(cond) return true;
   let rec;
@@ -3462,6 +3462,8 @@ function finalizeSeason(){
       // 主角联赛冠军也进入世界荣誉墙，让世界赛事与荣誉自己流转
       if(!String(s.leagueKey||'').startsWith('youth')) p2WorldHonour(p,{type:'league',league:s.leagueKey,leagueName:s.leagueName,club:s.champion,year:s.year,pts:(s.table[s.champion]||{}).pts});
       settleSeasonOutcome(s,rank);
+      // R289：兜底——若结算分支因旧档/中途状态没有改联赛，按最终名次再补一次；已改过则跳过
+      try{ p2EnsurePlayerTierOutcome(p,s); }catch(e){ diagSoft('PLAYER_TIER',e); }
       updateLegacyStatus(p);
     }
     // 赛季目标只在完整赛季结算，残缺赛季的积分榜不可信
@@ -3571,6 +3573,28 @@ function p2ClubSeasonReview(p,s,pos,n){
     }
   }
 }
+// R289：真实球员赛季的升降级兜底。settleSeasonOutcome 已处理大部分情况；
+// 这里只处理“结算后仍停留在旧联赛”的旧档/异常分支，绝不重复升级。
+function p2EnsurePlayerTierOutcome(p,s){
+  if(!p||!p.stats||!p.stats.club||!s||!s.leagueKey||!s.finalRank) return null;
+  if(p.stats.club.leagueKey!==s.leagueKey) return null;
+  const tier=LEAGUE_TIERS[s.leagueKey]||{};
+  const n=(s.clubs&&s.clubs.length)||0, pos=Number(s.finalRank)||0;
+  if(!n||!pos) return null;
+  let to=null,dir=null;
+  if(pos>=n-2&&tier.lower&&LEAGUES[tier.lower]){ to=tier.lower; dir='down'; }
+  else if(pos<=2&&tier.upper&&LEAGUES[tier.upper]){ to=tier.upper; dir='up'; }
+  if(!to) return null;
+  const fromName=(LEAGUES[s.leagueKey]||{}).name||s.leagueKey, toName=LEAGUES[to].name;
+  const fromLevel=Number(p.stats.club.level)||getClubRep(p.stats.club.name,s.year)||60;
+  p.stats.club.leagueKey=to;
+  p.stats.club.league=toName;
+  p.stats.club.level=dir==='up'?Math.min(95,fromLevel+6):Math.max(38,fromLevel-8);
+  if(dir==='up') s.promoted=true; else s.relegated=true;
+  Game.log.unshift(`[${dateStr()}] ${dir==='up'?'⬆️':'⬇️'} ${p.stats.club.name}以${fromName}第${pos}名${dir==='up'?'升入':'降入'}${toName}。`);
+  return {from:s.leagueKey,to:to,dir:dir};
+}
+
 // 赛季结算：奖金、洲际资格、升降级
 function settleSeasonOutcome(s,rank){
   const p=Game.player;
@@ -37442,6 +37466,8 @@ function p2CoachSeasonSeed(p,c,opt){
   const L=LEAGUES[k.leagueKey]; if(!L||!Array.isArray(L.clubs)||L.clubs.length<2) return null;
   const year=Number(opt&&opt.year)||Number(k.season&&k.season.year)||Game.date.year;
   const clubs=L.clubs.slice();
+  // 升级/降级后的教练队不在静态联赛名单里时补进来，避免新赛季没有自己
+  if(k.club&&!clubs.includes(k.club)) clubs.push(k.club);
   const total=p2WorldSeasonRounds(clubs);
   const rounds=[];
   for(let w=0;w<total;w++) rounds.push(p2WorldRoundFixtures(clubs,w,total));
@@ -38122,6 +38148,24 @@ function p2CoachSeasonArchive(p,c,k,s,rank){
   }catch(e){ diagSoft('COACH_ARCHIVE',e); }
   return rec;
 }
+function p2CoachApplyTier(p,c,k,s){
+  const lk=(s&&s.leagueKey)||(k&&k.leagueKey);
+  const tier=LEAGUE_TIERS[lk]||{};
+  const n=(s&&s.clubs&&s.clubs.length)||0, pos=Number(s&&s.finalRank)||0;
+  if(!n||!pos||!tier) return null;
+  let to=null, dir=null;
+  if(pos>=n-2&&tier.lower&&LEAGUES[tier.lower]){ to=tier.lower; dir='down'; }
+  else if(pos<=2&&tier.upper&&LEAGUES[tier.upper]){ to=tier.upper; dir='up'; }
+  if(!to||to===lk) return null;
+  const fromName=(LEAGUES[lk]||{}).name||lk, toName=LEAGUES[to].name;
+  k.leagueKey=to; k.league=toName; k.leagueLevel=LEAGUES[to].level;
+  const move={from:lk,to:to,dir:dir,fromName:fromName,toName:toName,rank:pos};
+  s.tierChange=move;
+  const msg=dir==='up'?`⬆️ ${k.club}以${fromName}第${pos}名升入${toName}！`:`⬇️ ${k.club}以${fromName}第${pos}名降入${toName}。`;
+  if(Game.log) Game.log.unshift('['+dateStr()+'] '+msg);
+  if(c&&Array.isArray(c.log)) c.log.unshift(s.year+'年'+msg);
+  return move;
+}
 function p2CoachSettleSeason(p,c){
   const k=c&&c.coachClub, s=k&&k.season; if(!s) return null;
   if(s.settlement) return s.settlement;
@@ -38130,6 +38174,8 @@ function p2CoachSettleSeason(p,c){
   s.champion=rank[0]?rank[0].cn:null;
   // R248：冠军 / 欧战名额 / 历史榜落账（返回本联赛下季欧战资格，含本队是否在列）
   const euroRec=p2CoachSeasonArchive(p,c,k,s,rank);
+  // R289：教练所在队也按同一套联赛层级升降级；升级后下季 p2CoachSeasonSeed 用新联赛名单
+  const tierMove=p2CoachApplyTier(p,c,k,s);
   // R252：赛果先折成俱乐部声望（跨季累积），再让声望去影响本季结算的预算地板与董事会耐心
   let prCalc=null;
   try{ prCalc=p2CoachPrestigeCalc(k.club,s,rank,euroRec); }catch(e){ diagSoft('COACH_PRESTIGE',e); }
@@ -38201,6 +38247,7 @@ function p2CoachSettleSeason(p,c){
     }
   }
   c.coachRep=clamp((Number(c.coachRep)||0)+deltaRep,0,100);
+  if(tierMove) line+=' '+(tierMove.dir==='up'?'⬆️ 升级':'⬇️ 降级')+'：下赛季征战'+tierMove.toName+'。';
   // R252：俱乐部声望写回世界账本——冠军/达标/欧战往上抬，落后往下压，被解约再扣 2 点
   let prestige=null;
   try{ prestige=p2CoachPrestigeCommit(k.club,prCalc,outcome==='sacked'); }catch(e){ diagSoft('COACH_PRESTIGE',e); }
@@ -38219,7 +38266,7 @@ function p2CoachSettleSeason(p,c){
     yearsBefore:yearsBefore,yearsLost:yearsLost,yearsBonusPct:yearsBonusPct,penaltyNotch:penaltyNotch,penaltyPct:penaltyPct,
     cupStage:(kind==='cup'?cupStage:null),cupRound:((s.cup&&s.cup.round)||null),
     champion:s.champion,seasonNo:s.seasonNo,budget:newBudget,budgetBefore:budget,budgetFloor:prestigeFloor,years:newYears,repDelta:deltaRep,salary:coachSalary,
-    spent:spent,prestige:prestige,tol:tolUsed,patience:pfx.patience,
+    spent:spent,prestige:prestige,tol:tolUsed,patience:pfx.patience,tier:tierMove,
     euro:euroRec?{ucl:(euroRec.ucl||[]).slice(),uel:(euroRec.uel||[]).slice(),uecl:(euroRec.uecl||[]).slice(),slots:euroRec.slots}:null,
     record:{w:row.w,d:row.d,l:row.l,gf:row.gf,ga:row.ga,pts:row.pts}};
   if(!Array.isArray(c.log)) c.log=[];
@@ -38315,7 +38362,7 @@ function p2CoachNextSeason(){
   // 日历/年龄/阵容老化/转会/财政都走与「等待后代」同一条快进链，不再只手改 Game.date.year 与 p.age。
   const ffT0=p2NowMs();
   try{
-    p2FastForwardWorld(p,need,{simulateLast:true,skipLeague:k.leagueKey,offspring:false});
+    p2FastForwardWorld(p,need,{simulateLast:true,skipLeague:(s.tierChange&&s.tierChange.from)||k.leagueKey,offspring:false});
   }catch(err){
     diagSoft('COACH_WORLD_FF', err);
     Game.date.year=(Number(Game.date.year)||0)+need;

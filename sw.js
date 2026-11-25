@@ -1,6 +1,6 @@
 // 绿茵生涯 PWA 壳缓存：导航请求走网络优先，保证更新能及时生效；静态资源缓存优先
 // BUILD 必须与 绿茵生涯.html 的 BUILD_ID 一致（tools/guard.js 发布前比对）
-const BUILD = '2026.11.25.288';
+const BUILD = '2026.11.25.289';
 const CACHE = 'lvyin-pwa-' + BUILD;
 // 缓存白名单：只缓存游戏壳本身。backup/、tools/out/ 等目录永远不会进来。
 // ./ 已覆盖站点根，不再重复缓存 ./index.html（同一份 7MB 页面存两遍没有意义）。
