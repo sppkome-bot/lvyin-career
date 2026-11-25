@@ -35915,11 +35915,13 @@ function p2ShowSquadPlayer(club,idx){
   if(!pl){ p2ShowClub(club); return; }
   const year=currentYear(), since=Number(pl[6])||year, tenure=Math.max(1,year-since+1);
   const hg=Number(pl[7])?1:0, key=p2ClubLeagueKey(club);
-  render(`<div id="playerCard" data-name="${p2Esc(pl[0])}" data-pos="${pl[1]}" data-age="${pl[2]}" data-ca="${pl[3]}" data-pa="${pl[4]}" data-tenure="${tenure}" data-hg="${hg}" data-until="${pl[5]}">
+  const worldValue=p2ValueCore(Number(pl[3])||0,Number(pl[2])||year,Math.max(0,(Number(pl[5])||year)-year),key);
+  render(`<div id="playerCard" data-name="${p2Esc(pl[0])}" data-pos="${pl[1]}" data-age="${pl[2]}" data-ca="${pl[3]}" data-pa="${pl[4]}" data-tenure="${tenure}" data-hg="${hg}" data-until="${pl[5]}" data-value="${Math.round(worldValue)}">
     <h2>👤 ${p2Esc(pl[0])}</h2>
     <div class="card"><h3>${p2Esc(club)} · ${p2SquadGroupLabel(pl[1])}</h3>
       <div class="stat-row"><span class="stat-label">年龄</span><span class="stat-value">${pl[2]} 岁</span></div>
       <div class="stat-row"><span class="stat-label">能力 / 潜力（CA）</span><span class="stat-value">${ovr200From100(pl[3])} / ${ovr200From100(pl[4])} <span style="color:#94a3b8;font-size:11px;">（1–200）</span> <span style="color:#fbbf24;">${p2PotStars(pl[4])}</span></span></div>
+      <div class="stat-row"><span class="stat-label">身价（中性）</span><span class="stat-value">¥${(worldValue/10000).toFixed(1)}万 <span style="color:#94a3b8;font-size:11px;">同核心 · 不含买方溢价</span></span></div>
       <div class="stat-row"><span class="stat-label">合同到期</span><span class="stat-value">${pl[5]||'—'} 年</span></div>
       <div class="stat-row"><span class="stat-label">效力年数</span><span class="stat-value">${tenure} 年（${since} 入队）</span></div>
       <div class="stat-row"><span class="stat-label">青训身份</span><span class="stat-value" style="color:${hg?'#fbbf24':'#94a3b8'};">${hg?'本队青训':'非本队青训'}</span></div>
