@@ -33763,7 +33763,7 @@ const randFloat = (min, max) => Math.random() * (max - min) + min;
 const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
 
 // ===================== 版本号（每次发版必改；sw.js 的 BUILD 必须与本值一致） =====================
-const BUILD_ID = '2026.11.25.287';
+const BUILD_ID = '2026.11.25.288';
 // 措施四：开发期横幅（仅 ?dev=1）
 if(typeof location!=='undefined' && /[?&]dev=1(?:&|$)/.test(location.search||'')){
   try{ console.log('%c[BUILD]','color:#0af',BUILD_ID); }catch(e){/*静默:日志*/}
@@ -34028,7 +34028,7 @@ const ASSERT_LEVEL = (function(){
   return 0;
 })();
 // 与 sw.js 的 BUILD 必须一致；tools/guard.js 会在发布前比对两者
-const SW_BUILD = '2026.11.25.287';
+const SW_BUILD = '2026.11.25.288';
 function assertInv(id, cond, detail){
   if(cond) return true;
   let rec;
@@ -41294,8 +41294,8 @@ function advanceDay(){
   }
   // 青年队征召窗口：每年 3/6/9 月 1 日；6 月只有青年国际赛事才触发，3/9 月无赛事时为友谊赛
   if(d.day===1 && (d.month===3||d.month===6||d.month===9) && !p.injury && p2YouthWindowTick(p)) return;
-  // 转会窗：冬窗/夏窗开启时，可能有俱乐部正式报价
-  if(d.day===1 && p2TransferWindowCheck(p)) return;
+  // 转会窗：冬窗/夏窗开启后的前 7 天，可能有俱乐部主动报价（青训按表现单独开通道）
+  if(d.day<=7 && p2TransferWindowCheck(p)) return;
   // 伤病时不能比赛（打封闭带伤坚持除外）；若逢比赛日则模拟球队本轮结果
   if(p.injury && !p.injury.playThrough){
     if(leagueMatchDue()) simulateMissedSeasonRound();
@@ -51477,36 +51477,56 @@ function triggerTransfer(fromContract){
   const offers=[];
   const curClub=(p.stats.club&&p.stats.club.name)||'';
   const tm=p2TransferMediaMods(p);
-  leagues.forEach(lk=>{
-    const clubs=getLeagueClubs(lk).filter(c=>c.name!==curClub);
-    let eligible=clubs.filter(c=>Math.abs(c.rep-p.reputation)<(requesting?30:20)+tm.win);
-    // 声望与联赛整体差距较大时，退而取声望最接近的几支球队，避免低声望球员永远收不到报价
-    if(eligible.length===0) eligible=[...clubs].sort((a,b)=>Math.abs(a.rep-p.reputation)-Math.abs(b.rep-p.reputation)).slice(0,3);
-    if(eligible.length>0){
-      const c=pick(eligible);
-      // 身价是锚点：挂牌 0.90×、申请转会 0.85×，截止日再给 15% 溢价。
-      // 随机浮动收窄到 0.95–1.18，避免同一身价在同一周出现 0.8× 与 1.3× 的极端报价。
-      let fee=Math.round(estimateMarketValue(p)*transferFeeMultiplier(p)*transferDeadlineFeeMult(Game.date)*randFloat(0.95,1.18)*(1+tm.fee));
-      // R287 C3：买方预算闸门——报价不得超过买方可用额度的 55%，超出则压到上限；压不到 50 万就不出价。
-      const room=p2TransferBudgetRoom(c.name,lk,c.rep,Game.date.year);
-      if(room<500000) return;
-      if(fee>room) fee=Math.max(500000,Math.floor(room/10000)*10000);
-      const wageCap=transferWageCap(c,lk);
-      const rawWage=Math.max(2000,repWageFloor(p.reputation),transferWageTarget(p,wageCap),Math.round(fee*0.0003/100)*100);
-      const wage=Math.min(Math.round(rawWage*(deadline?1+TRANSFER_RULES.deadlineWage:1)/100)*100,wageCap);
-      const years=p.age<=23?5:p.age<=28?4:p.age<=31?3:2;
-      const loan=p.age<=21&&c.rep>(p.stats.club.level||60)+8&&Math.random()<0.35;
-      offers.push({club:c,fee,wage,years,loan,
-        buyOption:loan&&Math.random()<0.55?Math.round(fee*randFloat(1.05,1.4)):null,
-        signingBonus:Math.round(fee*randFloat(0.03,0.08)/1000)*1000,
-        goalBonus:Math.max(500,Math.round(wage*randFloat(0.3,0.9)/100)*100),
-        assistBonus:Math.max(300,Math.round(wage*randFloat(0.15,0.45)/100)*100),
-        appearanceBonus:Math.max(300,Math.round(wage*randFloat(0.1,0.3)/100)*100),
-        rounds:0,patience:deadline?2:3,negotiated:false,withdrawn:false,listed,deadline,wageCap,
-        windowDays:winDays,final:lastCall,
-        mediaTier:tm.tier,mediaNote:tm.note,mediaFee:tm.fee});
+  const youth=isYouthSetup(p);
+  const makeOffer=(c,lk,allowLoan)=>{
+    let anchor=estimateMarketValue(p);
+    if(youth){
+      // 青训报价按潜力给一个下限：不能拿“当前 CA 只有 40”去定义一名 PA90 的苗子。
+      const yp=p2YouthInterest(p);
+      anchor=Math.max(anchor,p2ValueCore(Math.max(yp.ca,Math.round(yp.pa*0.8)),p.age,3,lk)*0.35);
     }
-  });
+    // 身价是锚点：挂牌 0.90×、申请转会 0.85×，截止日再给 15% 溢价。
+    // 随机浮动收窄到 0.95–1.18，避免同一身价在同一周出现 0.8× 与 1.3× 的极端报价。
+    let fee=Math.round(anchor*transferFeeMultiplier(p)*transferDeadlineFeeMult(Game.date)*randFloat(0.95,1.18)*(1+tm.fee));
+    // R287 C3：买方预算闸门——报价不得超过买方可用额度的 55%，超出则压到上限；压不到 50 万就不出价。
+    const room=p2TransferBudgetRoom(c.name,lk,c.rep,Game.date.year);
+    if(room<500000) return null;
+    if(fee>room) fee=Math.max(500000,Math.floor(room/10000)*10000);
+    const wageCap=transferWageCap(c,lk);
+    const rawWage=Math.max(2000,repWageFloor(p.reputation),transferWageTarget(p,wageCap),Math.round(fee*0.0003/100)*100);
+    const wage=Math.min(Math.round(rawWage*(deadline?1+TRANSFER_RULES.deadlineWage:1)/100)*100,wageCap);
+    const years=p.age<=23?5:p.age<=28?4:p.age<=31?3:2;
+    const loan=!!allowLoan&&p.age<=21&&c.rep>(p.stats.club.level||60)+8&&Math.random()<0.35;
+    return {club:c,fee,wage,years,loan,
+      buyOption:loan&&Math.random()<0.55?Math.round(fee*randFloat(1.05,1.4)):null,
+      signingBonus:Math.round(fee*randFloat(0.03,0.08)/1000)*1000,
+      goalBonus:Math.max(500,Math.round(wage*randFloat(0.3,0.9)/100)*100),
+      assistBonus:Math.max(300,Math.round(wage*randFloat(0.15,0.45)/100)*100),
+      appearanceBonus:Math.max(300,Math.round(wage*randFloat(0.1,0.3)/100)*100),
+      rounds:0,patience:deadline?2:3,negotiated:false,withdrawn:false,listed,deadline,wageCap,
+      windowDays:winDays,final:lastCall,
+      mediaTier:tm.tier,mediaNote:tm.note,mediaFee:tm.fee};
+  };
+  if(youth){
+    // 青训挖角：按表现/潜力找高于当前梯队层级的俱乐部，不再被“声望≥25”和“声望相近”挡住。
+    const yp=p2YouthOfferClubs(p);
+    yp.clubs.forEach(x=>{
+      const o=makeOffer(x.c,x.lk,false);
+      if(o){ o.youthOffer=true; o.youthScore=yp.prof.score; offers.push(o); }
+    });
+  }else{
+    leagues.forEach(lk=>{
+      const clubs=getLeagueClubs(lk).filter(c=>c.name!==curClub);
+      let eligible=clubs.filter(c=>Math.abs(c.rep-p.reputation)<(requesting?30:20)+tm.win);
+      // 声望与联赛整体差距较大时，退而取声望最接近的几支球队，避免低声望球员永远收不到报价
+      if(eligible.length===0) eligible=[...clubs].sort((a,b)=>Math.abs(a.rep-p.reputation)-Math.abs(b.rep-p.reputation)).slice(0,3);
+      if(eligible.length>0){
+        const c=pick(eligible);
+        const o=makeOffer(c,lk,true);
+        if(o) offers.push(o);
+      }
+    });
+  }
   // 解约金条款：有声望的俱乐部可直接触发
   if(p.contract&&p.contract.releaseClause&&offers.length&&Math.random()<0.5){
     const rich=offers.filter(o=>!o.loan&&o.club.rep>=70).sort((a,b)=>b.club.rep-a.club.rep)[0];
@@ -51528,7 +51548,7 @@ function triggerTransfer(fromContract){
     o.timeLeft=o.patience;
   });
   // 10：经纪人内幕报价——能力高才有概率提前拿到更高层级俱乐部的报价，不是必得
-  if(topOffers.length&&ag.quality>=62&&!euroOnly&&topOffers.length<4&&Math.random()<clamp((ag.quality-55)*0.022,0.05,0.55)){
+  if(topOffers.length&&ag.quality>=62&&!euroOnly&&!youth&&topOffers.length<4&&Math.random()<clamp((ag.quality-55)*0.022,0.05,0.55)){
     const taken=new Set(topOffers.map(x=>x.club.name));
     const pool=[];
     leagues.forEach(lk=>getLeagueClubs(lk).forEach(c=>{
@@ -51573,7 +51593,7 @@ function renderTransferOffers(){
   const offersHtml=offers.map((o,i)=>o.withdrawn
     ? `<div class="card" style="opacity:.55;"><div class="talent-name">${o.club.name}</div><div class="talent-desc">对方已撤回报价</div></div>`
     : `<div class="card talent-card" onclick="openTransferOffer(${i})">
-      <div class="talent-name">${o.club.name}（${o.club.league}）${o.releaseClause?' <span style="color:#fbbf24;font-size:12px;">解约金条款</span>':''}${o.loan?' <span style="color:#38bdf8;font-size:12px;">租借'+(o.buyOption?'+买断':'')+'</span>':''}${o.final?' <span style="color:#f87171;font-size:12px;">最后报价</span>':''}</div>
+      <div class="talent-name">${o.club.name}（${o.club.league}）${o.releaseClause?' <span style="color:#fbbf24;font-size:12px;">解约金条款</span>':''}${o.youthOffer?' <span style="color:#34d399;font-size:12px;">青训挖角</span>':''}${o.loan?' <span style="color:#38bdf8;font-size:12px;">租借'+(o.buyOption?'+买断':'')+'</span>':''}${o.final?' <span style="color:#f87171;font-size:12px;">最后报价</span>':''}</div>
       <div class="talent-desc">声望：${o.club.rep} | ${o.releaseClause?'解约金':'转会费'}：¥${(o.fee/10000).toFixed(1)}万 | 周薪：¥${o.wage.toLocaleString()} | 合同：${o.years}年${o.loan&&o.buyOption?' | 买断费：¥'+(o.buyOption/10000).toFixed(1)+'万':''}</div>
     </div>`
   ).join('');
@@ -51916,6 +51936,7 @@ function acceptTransfer(i){
   const offer=(Game.transferOffers||[])[i];
   if(!offer) return;
   const oldClub=(p.stats&&p.stats.club&&p.stats.club.name)||'';
+  const fromYouth=isYouthSetup(p)||Number(p.age)<18;
   // R116：谈判破裂后冷却期内禁止从“直接接受报价”绕过后果
   if(p2NegClubBlocked(p,offer.club.name)){
     showToast('与这家俱乐部的谈判已破裂，冷却期内无法完成转会','warning');
@@ -51949,11 +51970,23 @@ function acceptTransfer(i){
     p.squadRank=p.loan.rank;
   } else {
     p.loan=null;
-    p.stats.club={name:offer.club.name,league:offer.club.league,position:'主力',level:offer.club.rep,appearances:0,goals:0,leagueKey};
+    p.stats.club={name:offer.club.name,league:offer.club.league,position:fromYouth?'替补':'主力',level:offer.club.rep,appearances:0,goals:0,leagueKey};
     p.weeklySalary=signWage;
     p.contract={club:offer.club.name,wage:signWage,years:signYears,until:Game.date.year+signYears,
       signingBonus:signBonus,goalBonus:offer.goalBonus,assistBonus:offer.assistBonus,appearanceBonus:offer.appearanceBonus,releaseClause:signClause,promise:signPromise};
     p.money+=(signBonus||0);
+    if(fromYouth){
+      // 青训被挖走：先跟一线队训练，不直接给主力；青年队资历也不带入新东家。
+      p.squadRank=18;
+      p.currentForm=6.0;
+      p.relationships.coach=45;
+      if(!p.youth) p.youth={};
+      p.youth.signed=true;
+      p.youth.direct=true;
+      p.youth.clubName=offer.club.name;
+      p.youth.promotionReady=false;
+      p.youth.promotionReason=null;
+    }
   }
   p.freeAgentPrevWage=0;
   // Round 20：统计真实发生的转会（租借不计入转会次数）
@@ -51976,7 +52009,7 @@ function acceptTransfer(i){
   p.facilities.training=clamp(1+Math.floor((newLevel-40)/12),1,5);
   if(p.p2Flags&&p.stats.club.leagueKey!=='spl') p.p2Flags.saudiExit=false;
   p.fanApproval=30;
-  p.relationships.coach=50;
+  if(!fromYouth) p.relationships.coach=50;
   fxBump(p,'reputation',3,0,0,100);
   p2Ensure(p);
   p2RefreshNpcWorld(p);
@@ -68544,12 +68577,62 @@ function inTransferWindow(d){
 function isIntlWindow(m){ return [3,6,9,10,11].includes(m); }
 function p2TransferWindowCheck(p){
   if(!inTransferWindow(Game.date)) return false;
-  if((p.reputation||0)<25) return false;
-  if(Game.season&&Game.season.finished) return false;
+  const youth=isYouthSetup(p);
+  if(!youth && (p.reputation||0)<15) return false;
   if(p.freeAgent) return false;
-  if(Math.random()>((p.transferRequest)?0.5:(p.transferListing?0.4:0.16))) return false;
+  // 同一转会窗只主动上门一次；玩家仍可从转会页手动刷新报价
+  const winKey=Game.date.year+'-'+transferWindowName(Game.date);
+  if(!p.transferRequest&&!p.transferListing&&p.aiOfferWindow===winKey) return false;
+  let chance;
+  if(youth){
+    const prof=p2YouthInterest(p);
+    if(prof.score<50) return false;
+    chance=clamp(0.30+(prof.score-50)*0.012,0.25,0.85);
+  }else{
+    chance=(p.transferRequest)?0.5:(p.transferListing?0.4:clamp(0.12+((p.reputation||0)-15)*0.004,0.12,0.28));
+  }
+  if(Math.random()>chance) return false;
   // 只有真的生成并展示了报价才算当天事件，否则会吞掉当天的比赛/事件流程
-  return triggerTransfer()===true;
+  const ok=triggerTransfer()===true;
+  if(ok&&!p.transferRequest&&!p.transferListing) p.aiOfferWindow=winKey;
+  return ok;
+}
+// R288：青训球员的主动挖角画像。只用于“有没有俱乐部愿意来谈”，不直接改身价。
+function p2YouthInterest(p){
+  const ca=clamp(calcOverall(p)*5,1,99);
+  const pa=clamp(Number(p.hidden&&p.hidden.potential)||ca,1,99);
+  const s=(p.stats&&p.stats.season)||{};
+  const apps=Number(s.appearances)||0, goals=Number(s.goals)||0, assists=Number(s.assists)||0;
+  const avg=Number(seasonAvgRating(p,Game.season))||6.5;
+  const prod=apps>0?((goals+assists*0.7)/apps):0;
+  const score=ca*0.5+pa*0.3+(Number(p.reputation)||0)*0.6+Math.min(20,prod*30)+(avg-6.5)*6;
+  return {ca,pa,apps,goals,assists,avg,prod,score:Math.round(score*10)/10};
+}
+function p2YouthOfferClubs(p){
+  const prof=p2YouthInterest(p);
+  const cur=(p.stats&&p.stats.club&&p.stats.club.name)||'';
+  const parent=resolveClubName(cur.replace('青训',''));
+  const curLvl=Number(p.stats&&p.stats.club&&p.stats.club.level)||55;
+  const maxRep=clamp(Math.round(45+prof.score*0.55),60,92);
+  const minRep=clamp(Math.max(curLvl+3,maxRep-24),45,85);
+  const seen=new Set([cur,parent]);
+  const pool=[];
+  Object.keys(LEAGUES).filter(k=>!String(k).startsWith('youth')).forEach(lk=>{
+    getLeagueClubs(lk).forEach(c=>{
+      if(seen.has(c.name)||c.rep<minRep||c.rep>maxRep) return;
+      seen.add(c.name);
+      const w=1/(1+Math.abs(c.rep-maxRep)*0.25)+(c.rep>=80?0.45:0);
+      pool.push({c,lk,w});
+    });
+  });
+  const n=clamp(1+Math.round((prof.score-55)/14),1,3);
+  const out=[];
+  while(out.length<n&&pool.length){
+    let total=pool.reduce((s,x)=>s+x.w,0), r=Math.random()*total, pickIdx=0;
+    for(let i=0;i<pool.length;i++){ r-=pool[i].w; if(r<=0){ pickIdx=i; break; } }
+    out.push(pool.splice(pickIdx,1)[0]);
+  }
+  return {prof,clubs:out};
 }
 function showCalendar(){
   const p=Game.player; p2Ensure(p);
